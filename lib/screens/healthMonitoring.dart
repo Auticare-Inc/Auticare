@@ -1,11 +1,5 @@
-// pubspec.yaml dependencies needed:
-// fl_chart: ^0.65.0
-// intl: ^0.19.0
-
-// pubspec.yaml dependencies needed:
-// fl_chart: ^0.68.0
-// intl: ^0.19.0
-
+// 
+import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
@@ -23,12 +17,21 @@ class _HRHRVMonitorPageState extends State<HRHRVMonitorPage> {
   Timer? _dataTimer;
   final List<HeartRateData> _hrData = [];
   final List<HRVData> _hrvData = [];
+  StreamSubscription<DatabaseEvent>? _firebaseHrSubscription;
+  
+  // Firebase Database reference
+  final DatabaseReference _hrRef = FirebaseDatabase.instance.ref().child('test_write/hrValue');
+  // Change 'heartRate' to your actual Firebase path
   
   // Current values
   double _currentHR = 0;
   double _currentHRV = 0;
   double _avgHR = 0;
   double _avgHRV = 0;
+  
+  // For HRV calculation
+  final List<double> _recentHRValues = [];
+  final int _hrvCalculationWindow = 10; // Number of HR values to use for HRV calculation
   
   // Status indicators
   String _hrStatus = 'Normal';
@@ -54,43 +57,58 @@ class _HRHRVMonitorPageState extends State<HRHRVMonitorPage> {
   @override
   void initState() {
     super.initState();
-    _startMonitoring();
+    _startFirebaseMonitoring();
   }
 
   @override
   void dispose() {
     _dataTimer?.cancel();
+    _firebaseHrSubscription?.cancel();
     super.dispose();
   }
 
-  void _startMonitoring() {
-    _dataTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
-      _generateMockData();
-      _updateStatus();
-      _checkForAlerts();
+  void _startFirebaseMonitoring() {
+    // Listen to Firebase Realtime Database for HR values
+    _firebaseHrSubscription = _hrRef.onValue.listen((DatabaseEvent event) {
+      final data = event.snapshot.value;
+      if (data != null) {
+        double hrValue;
+        
+        // Handle different data types from Firebase
+        if (data is num) {
+          hrValue = data.toDouble();
+        } else if (data is Map) {
+          // If your Firebase structure is more complex, extract HR value
+          // Example: {'value': 75, 'timestamp': 1234567890}
+          hrValue = (data['value'] as num?)?.toDouble() ?? 0;
+        } else {
+          print('Unexpected data type from Firebase: ${data.runtimeType}');
+          return;
+        }
+        
+        if (hrValue > 0) {
+          _processNewHRValue(hrValue);
+        }
+      }
+    }, onError: (error) {
+      print('Firebase listening error: $error');
     });
   }
 
-  void _generateMockData() {
-    // Simulate real sensor data with realistic variations
+  void _processNewHRValue(double hrValue) {
     final now = DateTime.now();
-    final random = Random();
-    
-    // Generate realistic HR data (60-120 bpm with variations)
-    double baseHR = 75 + (random.nextDouble() - 0.5) * 20;
-    if (_isStressEvent()) {
-      baseHR += 15 + random.nextDouble() * 15; // Stress response
-    }
-    
-    // Generate realistic HRV data (inversely related to stress)
-    double baseHRV = 35 + (random.nextDouble() - 0.5) * 15;
-    if (baseHR > 90) {
-      baseHRV -= 10; // Lower HRV during higher HR
-    }
     
     setState(() {
-      _currentHR = baseHR.clamp(50, 150);
-      _currentHRV = baseHRV.clamp(10, 60);
+      _currentHR = hrValue;
+      
+      // Add to recent HR values for HRV calculation
+      _recentHRValues.add(hrValue);
+      if (_recentHRValues.length > _hrvCalculationWindow) {
+        _recentHRValues.removeAt(0);
+      }
+      
+      // Calculate HRV from recent HR values
+      _currentHRV = _calculateHRV(_recentHRValues);
       
       // Add to data lists
       _hrData.add(HeartRateData(now, _currentHR));
@@ -106,12 +124,63 @@ class _HRHRVMonitorPageState extends State<HRHRVMonitorPage> {
       
       // Calculate averages
       _calculateAverages();
+      
+      // Update status and check for alerts
+      _updateStatus();
+      _checkForAlerts();
     });
   }
 
-  bool _isStressEvent() {
-    // Simulate occasional stress events (10% chance)
-    return Random().nextDouble() < 0.1;
+  double _calculateHRV(List<double> hrValues) {
+    if (hrValues.length < 2) return 0;
+    
+    // Method 1: RMSSD (Root Mean Square of Successive Differences)
+    // This is a common time-domain HRV measure
+    
+    // First, convert HR (beats per minute) to RR intervals (milliseconds)
+    List<double> rrIntervals = hrValues.map((hr) => 60000 / hr).toList();
+    
+    // Calculate successive differences
+    List<double> successiveDiffs = [];
+    for (int i = 1; i < rrIntervals.length; i++) {
+      successiveDiffs.add(rrIntervals[i] - rrIntervals[i - 1]);
+    }
+    
+    if (successiveDiffs.isEmpty) return 0;
+    
+    // Calculate RMSSD
+    double sumSquaredDiffs = successiveDiffs.map((diff) => diff * diff).reduce((a, b) => a + b);
+    double rmssd = sqrt(sumSquaredDiffs / successiveDiffs.length);
+    
+    return rmssd;
+  }
+
+  // Alternative HRV calculation methods you can use:
+  
+  double _calculateHRVStandardDeviation(List<double> hrValues) {
+    // Method 2: Standard Deviation of RR intervals (SDNN)
+    if (hrValues.length < 2) return 0;
+    
+    List<double> rrIntervals = hrValues.map((hr) => 60000 / hr).toList();
+    double mean = rrIntervals.reduce((a, b) => a + b) / rrIntervals.length;
+    double variance = rrIntervals.map((rr) => pow(rr - mean, 2)).reduce((a, b) => a + b) / rrIntervals.length;
+    return sqrt(variance);
+  }
+
+  double _calculateHRVPNN50(List<double> hrValues) {
+    // Method 3: pNN50 - percentage of successive RR intervals that differ by more than 50ms
+    if (hrValues.length < 2) return 0;
+    
+    List<double> rrIntervals = hrValues.map((hr) => 60000 / hr).toList();
+    int count = 0;
+    
+    for (int i = 1; i < rrIntervals.length; i++) {
+      if ((rrIntervals[i] - rrIntervals[i - 1]).abs() > 50) {
+        count++;
+      }
+    }
+    
+    return (count / (rrIntervals.length - 1)) * 100;
   }
 
   void _calculateAverages() {
@@ -185,6 +254,26 @@ class _HRHRVMonitorPageState extends State<HRHRVMonitorPage> {
     if (_enableVibrationAlerts) {
       // Trigger haptic feedback
       // HapticFeedback.mediumImpact();
+    }
+  }
+
+  // Method to manually fetch HR data (if needed for initial load)
+  Future<void> _fetchInitialHRData() async {
+    try {
+      // Fetch last N heart rate values for initial HRV calculation
+      final snapshot = await _hrRef.limitToLast(_hrvCalculationWindow).get();
+      if (snapshot.exists) {
+        final data = snapshot.value;
+        if (data is Map) {
+          data.forEach((key, value) {
+            if (value is num) {
+              _recentHRValues.add(value.toDouble());
+            }
+          });
+        }
+      }
+    } catch (e) {
+      print('Error fetching initial HR data: $e');
     }
   }
 
@@ -341,7 +430,7 @@ class _HRHRVMonitorPageState extends State<HRHRVMonitorPage> {
                     ),
                   ),
                   minX: 0,
-                  maxX: spots.length.toDouble() - 1,
+                  maxX: spots.length > 0 ? spots.length.toDouble() - 1 : 0,
                   minY: minY,
                   maxY: maxY,
                   lineBarsData: [
@@ -380,18 +469,18 @@ class _HRHRVMonitorPageState extends State<HRHRVMonitorPage> {
 
     return Scaffold(
       backgroundColor: Colors.grey[50],
-      appBar: AppBar(
-        title: const Text('Health Monitor'),
-        backgroundColor: Colors.blue[700],
-        foregroundColor: Colors.white,
-        elevation: 0,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: () => _showSettingsDialog(),
-          ),
-        ],
-      ),
+      // appBar: AppBar(
+      //   title: const Text('Health Monitor'),
+      //   backgroundColor: Colors.blue[700],
+      //   foregroundColor: Colors.white,
+      //   elevation: 0,
+      //   actions: [
+      //     IconButton(
+      //       icon: const Icon(Icons.settings),
+      //       onPressed: () => _showSettingsDialog(),
+      //     ),
+      //   ],
+      // ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(

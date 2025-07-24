@@ -1,23 +1,32 @@
-const functions = require("firebase-functions");
+const {onCall} = require("firebase-functions/v2/https");
+// const functions = require("firebase-functions");
 const admin = require("firebase-admin");
+
 admin.initializeApp();
 
-exports.sendGeofenceAlert = functions.database
-    .ref("/alerts/{userId}")
-    .onWrite((change, context) => {
-      const data = change.after.val();
-      if (!data) return null; // Skip delete events
+const sendNotificationAlert = onCall(async (event) => {
+  const {title, body, token} = event.data;
 
-      const userId = context.params.userId;
+  if (!title || !body || !token) {
+    throw new Error("Missing errors");
+  }
+  const payload = {
+    notification: {
+      title: title,
+      body: body,
+      sound: "default",
+    },
+    token: token,
+  };
+  try {
+    const response = await admin.messaging().send(payload);
+    return {success: true, response};
+  } catch (error) {
+    console.error("error sending notification:", error);
+    throw new Error("Notification failed");
+  }
+});
 
-      const payload = {
-        notification: {
-          title: "Geofence Alert",
-          body: "User has exited the safe zone!",
-          sound: "default",
-        },
-      };
-
-      // Send to topic (userId should match the subscribed topic on the app)
-      return admin.messaging().sendToTopic(userId, payload);
-    });
+module.exports = {
+  sendNotificationAlert,
+};
