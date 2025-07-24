@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 
 import '../models/appUser.dart';
 import 'authRepo.dart';
@@ -7,7 +8,9 @@ import 'authRepo.dart';
 
 class FirebaseAuthRepo implements AuthRepo{
   final FirebaseAuth firebaseAuth = FirebaseAuth.instance;
-  final FirebaseFirestore firebaseFirestore = FirebaseFirestore.instance;
+  final FirebaseFirestore firebaseFirestore = FirebaseFirestore.instanceFor(
+    databaseId: 'autism',
+    app: Firebase.app());
   @override
   Future<AppUser?> loginInWithEmailPassword(String email, String password)async{
     try{
@@ -20,6 +23,9 @@ class FirebaseAuthRepo implements AuthRepo{
       AppUser user = AppUser(
         uid: userCredential.user!.uid, 
         name:'', 
+        caregiverEmail: '',
+        caregiverName: '',
+        childName: '',
         email: email);
 
         //return user
@@ -32,7 +38,8 @@ class FirebaseAuthRepo implements AuthRepo{
   }
 
   @override
-  Future<AppUser?> registerInWithEmailPassword(String name, String email, String password)async{
+  Future<AppUser?> registerInWithEmailPassword(String email,String password,String name,String caregiverEmail,
+  String caregiverName,String childName)async{
     try{
       //attempt sign up
     UserCredential userCredential = await firebaseAuth.createUserWithEmailAndPassword(
@@ -43,7 +50,10 @@ class FirebaseAuthRepo implements AuthRepo{
 
     AppUser user = AppUser(
       uid: userCredential.user!.uid, 
-      name: name, 
+      name: name,
+      caregiverEmail:caregiverEmail,
+      caregiverName: caregiverName,
+      childName: childName,
       email: email);
 
       // Save user details
@@ -74,7 +84,10 @@ class FirebaseAuthRepo implements AuthRepo{
   return AppUser(
     uid: firebaseUser.uid, 
     name: '', 
-    email: firebaseUser.email!
+    email: firebaseUser.email!,
+    caregiverEmail: '',
+    caregiverName: '',
+    childName: ''
     );
   }
 
