@@ -45,8 +45,8 @@ class _LoginPageState extends State<LoginPage> with TickerProviderStateMixin {
   }
 
   void login()async{
-    final String email = emailController.text;
-    final String pw = passwordController.text;
+    final String email = emailController.text.trim();
+    final String pw = passwordController.text.trim();
 
     // auth cubit
     final authCubit = context.read<Authcubit>();

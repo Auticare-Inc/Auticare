@@ -136,104 +136,106 @@ class _GeofenceManagementPageState extends State<GeofenceManagementPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[50],
-      body: Column(
-        children: [
-          // Header section with gradient
-          Container(
-            width: double.infinity,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [AppColors.primary, AppColors.primary.withOpacity(0.8)],
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-              ),
-            ),
-            child: Container(
-              padding: EdgeInsets.fromLTRB(20, 0, 20, 24),
+      backgroundColor: Color(0xFFE8F4FD),
+      body: SafeArea(
+        child: Column(
+          children: [
+            // Header section with gradient
+            Container(
+              width: double.infinity,
               decoration: BoxDecoration(
-                color: Colors.grey[50],
-                // borderRadius: BorderRadius.only(
-                //   topLeft: Radius.circular(24),
-                //   topRight: Radius.circular(24),
-                // ),
+                gradient: LinearGradient(
+                  colors: [AppColors.primary, AppColors.primary.withOpacity(0.8)],
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                ),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  SizedBox(height: 20),
-                  Row(
-                    children: [
-                      Container(
-                        padding: EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: AppColors.primary.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(12),
+              child: Container(
+                padding: EdgeInsets.fromLTRB(20, 0, 20, 24),
+                decoration: BoxDecoration(
+                  color: Color(0xFFE8F4FD),
+                  // borderRadius: BorderRadius.only(
+                  //   topLeft: Radius.circular(24),
+                  //   topRight: Radius.circular(24),
+                  // ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(height: 20),
+                    Row(
+                      children: [
+                        Container(
+                          padding: EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: AppColors.primary.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Icon(
+                            Icons.location_searching,
+                            color: AppColors.primary,
+                            size: 24,
+                          ),
                         ),
-                        child: Icon(
-                          Icons.location_searching,
-                          color: AppColors.primary,
-                          size: 24,
-                        ),
-                      ),
-                      SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Active Geofences',
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.black87,
+                        SizedBox(width: 16),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Active Geofences',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.black87,
+                                ),
                               ),
-                            ),
-                            SizedBox(height: 4),
-                            Text(
-                              '${_geofences.length} ${_geofences.length == 1 ? 'zone' : 'zones'} configured',
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: Colors.grey[600],
+                              SizedBox(height: 4),
+                              Text(
+                                '${_geofences.length} ${_geofences.length == 1 ? 'zone' : 'zones'} configured',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.grey[600],
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
-                ],
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-          
-          // Content area
-          Expanded(
-            child: _geofences.isEmpty
-                ? _buildEmptyState()
-                : RefreshIndicator(
-                    onRefresh: () async {
-                      _loadGeofences();
-                    },
-                    child: ListView.builder(
-                      padding: EdgeInsets.all(16),
-                      physics: AlwaysScrollableScrollPhysics(),
-                      itemCount: _geofences.length,
-                      itemBuilder: (context, index) {
-                        final geofence = _geofences[index];
-                        return Padding(
-                          padding: EdgeInsets.only(bottom: 12),
-                          child: GeofenceCard(
-                            geofence: geofence,
-                            onDelete: () => _deleteGeofence(geofence.id),
-                            onToggle: () => _toggleGeofence(geofence),
-                          ),
-                        );
+            
+            // Content area
+            Expanded(
+              child: _geofences.isEmpty
+                  ? _buildEmptyState()
+                  : RefreshIndicator(
+                      onRefresh: () async {
+                        _loadGeofences();
                       },
+                      child: ListView.builder(
+                        padding: EdgeInsets.all(16),
+                        physics: AlwaysScrollableScrollPhysics(),
+                        itemCount: _geofences.length,
+                        itemBuilder: (context, index) {
+                          final geofence = _geofences[index];
+                          return Padding(
+                            padding: EdgeInsets.only(bottom: 12),
+                            child: GeofenceCard(
+                              geofence: geofence,
+                              onDelete: () => _deleteGeofence(geofence.id),
+                              onToggle: () => _toggleGeofence(geofence),
+                            ),
+                          );
+                        },
+                      ),
                     ),
-                  ),
-          ),
-        ],
+            ),
+          ],
+        ),
       ),
     );
   }

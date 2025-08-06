@@ -74,14 +74,16 @@ class Firestoredatabase {
   }
 
   static Future<Map<String,dynamic>?>getParentDetails()async{
-   final parentID = FirebaseAuth.instanceFor(app:Firebase.app()).currentUser;
-   DocumentSnapshot doc = await FirebaseFirestore.instanceFor(app:Firebase.app(),databaseId:'autism')
+   final user = FirebaseAuth.instanceFor(app:Firebase.app()).currentUser;
+   if(user==null) return null;
+   final String parentID = user!.uid;
+   final doc = await FirebaseFirestore.instanceFor(app:Firebase.app(),databaseId:'autism')
    .collection('users')
-   .doc('parentID')
+   .doc(parentID)
    .get();
 
    if(doc.exists){
-    var data = doc.data() as Map<String,dynamic>;
+    return doc.data() as Map<String,dynamic>;
    }
    else return null;
   }

@@ -23,6 +23,7 @@ class FirebaseAuthRepo implements AuthRepo{
       AppUser user = AppUser(
         uid: userCredential.user!.uid, 
         name:'', 
+        caregiverContact: '',
         caregiverEmail: '',
         caregiverName: '',
         childName: '',
@@ -39,7 +40,7 @@ class FirebaseAuthRepo implements AuthRepo{
 
   @override
   Future<AppUser?> registerInWithEmailPassword(String email,String password,String name,String caregiverEmail,
-  String caregiverName,String childName)async{
+  String caregiverName,String childName,caregiverContact)async{
     try{
       //attempt sign up
     UserCredential userCredential = await firebaseAuth.createUserWithEmailAndPassword(
@@ -51,10 +52,11 @@ class FirebaseAuthRepo implements AuthRepo{
     AppUser user = AppUser(
       uid: userCredential.user!.uid, 
       name: name,
+      caregiverContact: caregiverContact,
       caregiverEmail:caregiverEmail,
       caregiverName: caregiverName,
       childName: childName,
-      email: email);
+      email: email,);
 
       // Save user details
       await firebaseFirestore
@@ -86,6 +88,7 @@ class FirebaseAuthRepo implements AuthRepo{
     name: '', 
     email: firebaseUser.email!,
     caregiverEmail: '',
+    caregiverContact: '',
     caregiverName: '',
     childName: ''
     );
