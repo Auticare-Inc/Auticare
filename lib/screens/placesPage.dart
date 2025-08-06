@@ -199,7 +199,7 @@ class _PlacesScreenState extends State<PlacesScreen> with TickerProviderStateMix
     return Consumer<PlacesProvider>(
       builder: (context, provider, child) {
         return Scaffold(
-          backgroundColor: AppColors.background,
+          backgroundColor: const Color(0xFFE8F4FD),
           body: SafeArea(
             child: Column(
               children: [

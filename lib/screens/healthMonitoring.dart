@@ -1,4 +1,3 @@
-// 
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
@@ -17,17 +16,18 @@ class _HRHRVMonitorPageState extends State<HRHRVMonitorPage> {
   Timer? _dataTimer;
   final List<HeartRateData> _hrData = [];
   final List<HRVData> _hrvData = [];
-  StreamSubscription<DatabaseEvent>? _firebaseHrSubscription;
+  StreamSubscription<DatabaseEvent>? _firebaseSubscription;
   
-  // Firebase Database reference
-  final DatabaseReference _hrRef = FirebaseDatabase.instance.ref().child('test_write/hrValue');
-  // Change 'heartRate' to your actual Firebase path
+  // Firebase Database reference - Updated to match your structure
+  final DatabaseReference _healthRef = FirebaseDatabase.instance.ref().child('test_write_health');
   
   // Current values
   double _currentHR = 0;
   double _currentHRV = 0;
   double _avgHR = 0;
   double _avgHRV = 0;
+  String _currentDeviceId = '';
+  int _currentReadingNumber = 0;
   
   // For HRV calculation
   final List<double> _recentHRValues = [];
@@ -42,6 +42,10 @@ class _HRHRVMonitorPageState extends State<HRHRVMonitorPage> {
   // Alert system
   bool _isAlertActive = false;
   String _alertMessage = '';
+  
+  // Connection status
+  bool _isConnected = false;
+  DateTime? _lastUpdate;
   
   // Settings for autism-friendly monitoring
   bool _enableSoundAlerts = false;
@@ -58,48 +62,95 @@ class _HRHRVMonitorPageState extends State<HRHRVMonitorPage> {
   void initState() {
     super.initState();
     _startFirebaseMonitoring();
+    _startConnectionTimer();
   }
 
   @override
   void dispose() {
     _dataTimer?.cancel();
-    _firebaseHrSubscription?.cancel();
+    _firebaseSubscription?.cancel();
     super.dispose();
   }
 
-  void _startFirebaseMonitoring() {
-    // Listen to Firebase Realtime Database for HR values
-    _firebaseHrSubscription = _hrRef.onValue.listen((DatabaseEvent event) {
-      final data = event.snapshot.value;
-      if (data != null) {
-        double hrValue;
-        
-        // Handle different data types from Firebase
-        if (data is num) {
-          hrValue = data.toDouble();
-        } else if (data is Map) {
-          // If your Firebase structure is more complex, extract HR value
-          // Example: {'value': 75, 'timestamp': 1234567890}
-          hrValue = (data['value'] as num?)?.toDouble() ?? 0;
-        } else {
-          print('Unexpected data type from Firebase: ${data.runtimeType}');
-          return;
-        }
-        
-        if (hrValue > 0) {
-          _processNewHRValue(hrValue);
-        }
+  void _startConnectionTimer() {
+    // Timer to check connection status
+    _dataTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
+      if (_lastUpdate != null) {
+        final timeSinceLastUpdate = DateTime.now().difference(_lastUpdate!).inSeconds;
+        setState(() {
+          _isConnected = timeSinceLastUpdate < 30; // Consider disconnected if no data for 30 seconds
+        });
       }
-    }, onError: (error) {
-      print('Firebase listening error: $error');
     });
   }
 
-  void _processNewHRValue(double hrValue) {
+  void _startFirebaseMonitoring() {
+    print('Starting Firebase monitoring...');
+    
+    // Listen to the entire test_write_health node to catch all device updates
+    _firebaseSubscription = _healthRef.onValue.listen(
+      (DatabaseEvent event) {
+        print('Firebase data received: ${event.snapshot.value}');
+        final data = event.snapshot.value;
+        if (data != null && data is Map) {
+          _processFirebaseData(data);
+        }
+      },
+      onError: (error) {
+        print('Firebase listening error: $error');
+        setState(() {
+          _isConnected = false;
+        });
+      },
+    );
+
+    // Also listen to Firebase connection state
+    FirebaseDatabase.instance.ref('.info/connected').onValue.listen((event) {
+      final connected = event.snapshot.value as bool? ?? false;
+      print('Firebase connection state: $connected');
+      if (!connected) {
+        setState(() {
+          _isConnected = false;
+        });
+      }
+    });
+  }
+
+  void _processFirebaseData(Map<dynamic, dynamic> data) {
+    print('Processing Firebase data: $data');
+    
+    // Look for device entries in the data
+    data.forEach((key, value) {
+      if (value is Map && value.containsKey('heartRate')) {
+        final deviceData = value as Map<dynamic, dynamic>;
+        final heartRate = deviceData['heartRate'];
+        final deviceId = deviceData['deviceId']?.toString() ?? 'Unknown';
+        final readingNumber = deviceData['readingNumber'];
+        
+        print('Found device data - HR: $heartRate, Device: $deviceId, Reading: $readingNumber');
+        
+        if (heartRate is num && heartRate > 0) {
+          _processNewHRValue(
+            heartRate.toDouble(),
+            deviceId,
+            readingNumber ?? 0,
+          );
+        }
+      }
+    });
+  }
+
+  void _processNewHRValue(double hrValue, String deviceId, int readingNumber) {
     final now = DateTime.now();
+    
+    print('Processing new HR value: $hrValue from device: $deviceId');
     
     setState(() {
       _currentHR = hrValue;
+      _currentDeviceId = deviceId;
+      _currentReadingNumber = readingNumber;
+      _lastUpdate = now;
+      _isConnected = true;
       
       // Add to recent HR values for HRV calculation
       _recentHRValues.add(hrValue);
@@ -257,24 +308,53 @@ class _HRHRVMonitorPageState extends State<HRHRVMonitorPage> {
     }
   }
 
-  // Method to manually fetch HR data (if needed for initial load)
-  Future<void> _fetchInitialHRData() async {
-    try {
-      // Fetch last N heart rate values for initial HRV calculation
-      final snapshot = await _hrRef.limitToLast(_hrvCalculationWindow).get();
-      if (snapshot.exists) {
-        final data = snapshot.value;
-        if (data is Map) {
-          data.forEach((key, value) {
-            if (value is num) {
-              _recentHRValues.add(value.toDouble());
-            }
-          });
-        }
-      }
-    } catch (e) {
-      print('Error fetching initial HR data: $e');
-    }
+  Widget _buildConnectionStatus() {
+    return Card(
+      elevation: 2,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            Container(
+              width: 12,
+              height: 12,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: _isConnected ? Colors.green : Colors.red,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              _isConnected ? 'Connected' : 'Disconnected',
+              style: TextStyle(
+                color: _isConnected ? Colors.green : Colors.red,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const Spacer(),
+            if (_currentDeviceId.isNotEmpty) ...[
+              Text(
+                'Device: ${_currentDeviceId.substring(0, min(8, _currentDeviceId.length))}...',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey[600],
+                ),
+              ),
+            ],
+            if (_lastUpdate != null) ...[
+              const SizedBox(width: 8),
+              Text(
+                DateFormat('HH:mm:ss').format(_lastUpdate!),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey[600],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildMetricCard({
@@ -312,9 +392,10 @@ class _HRHRVMonitorPageState extends State<HRHRVMonitorPage> {
               children: [
                 Text(
                   value,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 32,
                     fontWeight: FontWeight.bold,
+                    color: _isConnected ? Colors.black : Colors.grey,
                   ),
                 ),
                 const SizedBox(width: 4),
@@ -387,68 +468,78 @@ class _HRHRVMonitorPageState extends State<HRHRVMonitorPage> {
             const SizedBox(height: 16),
             SizedBox(
               height: 200,
-              child: LineChart(
-                LineChartData(
-                  gridData: FlGridData(
-                    show: true,
-                    drawVerticalLine: false,
-                    horizontalInterval: (maxY - minY) / 4,
-                    getDrawingHorizontalLine: (value) {
-                      return FlLine(
-                        color: Colors.grey.withOpacity(0.3),
-                        strokeWidth: 1,
-                      );
-                    },
-                  ),
-                  titlesData: FlTitlesData(
-                    leftTitles: AxisTitles(
-                      sideTitles: SideTitles(
-                        showTitles: true,
-                        reservedSize: 40,
-                        getTitlesWidget: (value, meta) {
-                          return Text(
-                            value.toInt().toString(),
-                            style: const TextStyle(fontSize: 12),
-                          );
-                        },
+              child: spots.isEmpty
+                  ? Center(
+                      child: Text(
+                        'Waiting for data...',
+                        style: TextStyle(
+                          color: Colors.grey[600],
+                          fontSize: 16,
+                        ),
+                      ),
+                    )
+                  : LineChart(
+                      LineChartData(
+                        gridData: FlGridData(
+                          show: true,
+                          drawVerticalLine: false,
+                          horizontalInterval: (maxY - minY) / 4,
+                          getDrawingHorizontalLine: (value) {
+                            return FlLine(
+                              color: Colors.grey.withOpacity(0.3),
+                              strokeWidth: 1,
+                            );
+                          },
+                        ),
+                        titlesData: FlTitlesData(
+                          leftTitles: AxisTitles(
+                            sideTitles: SideTitles(
+                              showTitles: true,
+                              reservedSize: 40,
+                              getTitlesWidget: (value, meta) {
+                                return Text(
+                                  value.toInt().toString(),
+                                  style: const TextStyle(fontSize: 12),
+                                );
+                              },
+                            ),
+                          ),
+                          bottomTitles: const AxisTitles(
+                            sideTitles: SideTitles(showTitles: false),
+                          ),
+                          topTitles: const AxisTitles(
+                            sideTitles: SideTitles(showTitles: false),
+                          ),
+                          rightTitles: const AxisTitles(
+                            sideTitles: SideTitles(showTitles: false),
+                          ),
+                        ),
+                        borderData: FlBorderData(
+                          show: true,
+                          border: Border.all(
+                            color: Colors.grey.withOpacity(0.3),
+                          ),
+                        ),
+                        minX: 0,
+                        maxX: spots.isNotEmpty ? spots.length.toDouble() - 1 : 0,
+                        minY: minY,
+                        maxY: maxY,
+                        lineBarsData: [
+                          LineChartBarData(
+                            spots: spots,
+                            isCurved: true,
+                            color: lineColor,
+                            barWidth: 3,
+                            isStrokeCapRound: true,
+                            dotData: const FlDotData(show: false),
+                            belowBarData: BarAreaData(
+                              show: true,
+                              color: lineColor.withOpacity(0.1),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    bottomTitles: const AxisTitles(
-                      sideTitles: SideTitles(showTitles: false),
-                    ),
-                    topTitles: const AxisTitles(
-                      sideTitles: SideTitles(showTitles: false),
-                    ),
-                    rightTitles: const AxisTitles(
-                      sideTitles: SideTitles(showTitles: false),
-                    ),
-                  ),
-                  borderData: FlBorderData(
-                    show: true,
-                    border: Border.all(
-                      color: Colors.grey.withOpacity(0.3),
-                    ),
-                  ),
-                  minX: 0,
-                  maxX: spots.length > 0 ? spots.length.toDouble() - 1 : 0,
-                  minY: minY,
-                  maxY: maxY,
-                  lineBarsData: [
-                    LineChartBarData(
-                      spots: spots,
-                      isCurved: true,
-                      color: lineColor,
-                      barWidth: 3,
-                      isStrokeCapRound: true,
-                      dotData: const FlDotData(show: false),
-                      belowBarData: BarAreaData(
-                        show: true,
-                        color: lineColor.withOpacity(0.1),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
             ),
           ],
         ),
@@ -468,24 +559,37 @@ class _HRHRVMonitorPageState extends State<HRHRVMonitorPage> {
     }).toList();
 
     return Scaffold(
-      backgroundColor: Colors.grey[50],
-      // appBar: AppBar(
-      //   title: const Text('Health Monitor'),
-      //   backgroundColor: Colors.blue[700],
-      //   foregroundColor: Colors.white,
-      //   elevation: 0,
-      //   actions: [
-      //     IconButton(
-      //       icon: const Icon(Icons.settings),
-      //       onPressed: () => _showSettingsDialog(),
-      //     ),
-      //   ],
-      // ),
+      backgroundColor: Color(0xFFE8F4FD),
+      appBar: AppBar(
+        title:  Text('Health Monitor',style: TextStyle(color: Colors.blue,fontWeight: FontWeight.bold),),
+        backgroundColor: Color(0xFFE8F4FD),
+        foregroundColor: Colors.white,
+        elevation: 0,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings,color: Colors.blue,),
+            onPressed: () => _showSettingsDialog(),
+          ),
+          IconButton(
+            icon: Icon(_isConnected ? Icons.wifi : Icons.wifi_off,color: Colors.blue),
+            onPressed: () {
+              // Restart Firebase connection
+              _firebaseSubscription?.cancel();
+              _startFirebaseMonitoring();
+            },
+          ),
+        ],
+      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Connection status
+            _buildConnectionStatus(),
+            
+            const SizedBox(height: 16),
+
             // Alert banner
             if (_isAlertActive)
               Container(
@@ -520,24 +624,24 @@ class _HRHRVMonitorPageState extends State<HRHRVMonitorPage> {
                 Expanded(
                   child: _buildMetricCard(
                     title: 'Heart Rate',
-                    value: _currentHR.toInt().toString(),
+                    value: _currentHR > 0 ? _currentHR.toInt().toString() : '--',
                     unit: 'bpm',
                     status: _hrStatus,
                     statusColor: _hrStatusColor,
                     icon: Icons.favorite,
-                    subtitle: 'Avg: ${_avgHR.toInt()} bpm',
+                    subtitle: _avgHR > 0 ? 'Avg: ${_avgHR.toInt()} bpm' : 'No data',
                   ),
                 ),
                 const SizedBox(width: 16),
                 Expanded(
                   child: _buildMetricCard(
                     title: 'HRV',
-                    value: _currentHRV.toInt().toString(),
+                    value: _currentHRV > 0 ? _currentHRV.toInt().toString() : '--',
                     unit: 'ms',
                     status: _hrvStatus,
                     statusColor: _hrvStatusColor,
                     icon: Icons.timeline,
-                    subtitle: 'Avg: ${_avgHRV.toInt()} ms',
+                    subtitle: _avgHRV > 0 ? 'Avg: ${_avgHRV.toInt()} ms' : 'No data',
                   ),
                 ),
               ],
@@ -561,7 +665,7 @@ class _HRHRVMonitorPageState extends State<HRHRVMonitorPage> {
               spots: hrvSpots,
               lineColor: Colors.blue,
               minY: 0,
-              maxY: 80,
+              maxY: 150,
             ),
 
             const SizedBox(height: 24),
@@ -599,6 +703,17 @@ class _HRHRVMonitorPageState extends State<HRHRVMonitorPage> {
                         const SizedBox(width: 8),
                         Text(
                           'Data points: ${_hrData.length}',
+                          style: TextStyle(color: Colors.grey[700]),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Icon(Icons.sensors, size: 16, color: Colors.grey[600]),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Reading #${_currentReadingNumber}',
                           style: TextStyle(color: Colors.grey[700]),
                         ),
                       ],
@@ -649,6 +764,22 @@ class _HRHRVMonitorPageState extends State<HRHRVMonitorPage> {
               value: _enableVibrationAlerts,
               onChanged: (value) => setState(() => _enableVibrationAlerts = value),
             ),
+            const SizedBox(height: 16),
+            Text(
+              'Monitoring: test_write_health',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey[600],
+              ),
+            ),
+            if (_currentDeviceId.isNotEmpty)
+              Text(
+                'Device ID: $_currentDeviceId',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey[600],
+                ),
+              ),
           ],
         ),
         actions: [

@@ -93,7 +93,7 @@ class _MainAppState extends State<MainApp> {
     final GoRouter router =
       GoRouter(
         navigatorKey: NavigationService.navigatorKey,
-        initialLocation: '/',
+        initialLocation: '/emergencyPage',
         routes: <RouteBase>[
       GoRoute(
         path: '/',
@@ -163,7 +163,7 @@ class _MainAppState extends State<MainApp> {
         name: 'dashboard',
         pageBuilder: (BuildContext context, GoRouterState state) {
           return  MaterialPage(
-            child: ChildSafetyDashboard());
+            child: HealthPage());
         }),
       GoRoute(
         path: '/geoManagement',

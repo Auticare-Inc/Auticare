@@ -191,7 +191,7 @@ class _ManageCaregiversPageState extends State<ManageCaregiversPage> {
   Widget _buildCaregiverItem() {
     return StreamBuilder(
         stream: FirebaseFirestore.instanceFor(
-                app: Firebase.app(), databaseId: 'autism')
+             app: Firebase.app(), databaseId: 'autism')
             .collection('caregiverDetails')
             .snapshots(),
         builder: (context, snapshot) {

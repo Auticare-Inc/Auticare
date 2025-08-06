@@ -21,7 +21,8 @@ class _SignupPageState extends State<SignupPage> with TickerProviderStateMixin {
   final caregiverEmailController = TextEditingController();
   final caregiverNameController = TextEditingController();
   final childNameController = TextEditingController();
-  
+  final caregiverContactController = TextEditingController();
+
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
   late Animation<Offset> _slideAnimation;
@@ -59,19 +60,20 @@ class _SignupPageState extends State<SignupPage> with TickerProviderStateMixin {
     final String caregiverEmail = caregiverEmailController.text;
     final String caregiverName = caregiverNameController.text;
     final String childName = childNameController.text;
+    final String caregiverContact = caregiverContactController.text;
 
     // authCubit
     final authCubit = context.read<Authcubit>();
     // ensure fields are filled up
     if (email.isNotEmpty && pw.isNotEmpty && name.isNotEmpty && confirmPw.isNotEmpty) {
       if (pw == confirmPw) {
-        await authCubit.register(email, pw, name,caregiverEmail,caregiverName,childName);
+        await authCubit.register(email, pw, name,caregiverEmail,caregiverName,childName,caregiverContact);
         await Firestoredatabase.createCaregiverDetails(
           childName: childName,
           caregiverEmail: caregiverEmail, 
           caregiverName: caregiverName, 
           caregiverType: null,
-          caregiverContact: null);
+          caregiverContact: caregiverContact);
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -461,6 +463,13 @@ class _SignupPageState extends State<SignupPage> with TickerProviderStateMixin {
             controller: caregiverEmailController,
             hintText: 'Caregiver Email (Optional)',
             icon: Icons.supervisor_account_outlined,
+            color: Colors.orange,
+          ),
+          const SizedBox(height:20),
+          _buildEnhancedTextField(
+            controller: caregiverContactController,
+            hintText: 'Caregiver Contact (Eg: +233)',
+            icon: Icons.phone,
             color: Colors.orange,
           ),
         ],
