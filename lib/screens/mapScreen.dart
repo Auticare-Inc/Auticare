@@ -1,9 +1,7 @@
-
 import 'package:autismapp/repositories/cloudFunction.dart';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart' as gmaps;
 import 'package:geolocator/geolocator.dart';
-import 'package:firebase_database/firebase_database.dart';
 import 'package:provider/provider.dart';
 import 'dart:async';
 import '../models/place.dart';
@@ -15,7 +13,8 @@ import 'GeofenceUtils.dart/placesProvider.dart';
 class GeofencingMapsPage extends StatefulWidget {
   final Function()? onGeofenceUpdated;
 
-  const GeofencingMapsPage({Key? key, this.onGeofenceUpdated}) : super(key: key);
+  const GeofencingMapsPage({Key? key, this.onGeofenceUpdated})
+      : super(key: key);
 
   @override
   _GeofencingMapsPageState createState() => _GeofencingMapsPageState();
@@ -23,10 +22,9 @@ class GeofencingMapsPage extends StatefulWidget {
 
 class _GeofencingMapsPageState extends State<GeofencingMapsPage> {
   gmaps.GoogleMapController? _mapController;
-  gmaps.LatLng? _childLocation;
+  gmaps.LatLng? _childLocation; // kept for future child-tracking integration
   Position? _currentPosition;
   StreamSubscription<Position>? _positionStream;
-  StreamSubscription<DatabaseEvent>? _firebaseSubscription;
   Timer? _timeCheckTimer;
   Set<gmaps.Marker> _markers = {};
   Set<gmaps.Circle> _circles = {};
@@ -34,18 +32,31 @@ class _GeofencingMapsPageState extends State<GeofencingMapsPage> {
   String _locationStatus = 'Getting location...';
   bool _showGeofenceInfo = false;
   gmaps.BitmapDescriptor? _childIcon;
-  gmaps.BitmapDescriptor? _deviceIcon; // Added for device location marker
+  gmaps.BitmapDescriptor? _deviceIcon;
 
-  static const gmaps.CameraPosition _initialPosition = gmaps.CameraPosition(
-    target: gmaps.LatLng(5.6037, -0.1870), // Accra, Ghana default
+  // Dynamic initial position - will be set once we get current location
+  gmaps.CameraPosition? _initialPosition;
+
+  // Default fallback position (Accra, Ghana)
+  static const gmaps.CameraPosition _defaultPosition = gmaps.CameraPosition(
+    target: gmaps.LatLng(5.6037, -0.1870),
     zoom: 15,
   );
+
+  Map<String, bool> _lastNotificationState = {};
+  Map<String, DateTime> _lastNotificationTime = {};
+  Map<String, bool> _lastTimeWindowState = {};
+  static const Duration _notificationCooldown = Duration(minutes: 1);
+  DateTime? _appStartTime;
+
+  
 
   @override
   void initState() {
     super.initState();
     _appStartTime = DateTime.now();
     _initializeGeofencing();
+    // periodic safety net (kept), but we’ll also check on every location update
     _timeCheckTimer = Timer.periodic(const Duration(minutes: 1), (timer) {
       _scheduleGeofenceCheck();
     });
@@ -64,110 +75,129 @@ class _GeofencingMapsPageState extends State<GeofencingMapsPage> {
         _isLoading = true;
         _locationStatus = 'Initializing...';
       });
+
       await _loadCustomIcons();
-      await Provider.of<PlacesProvider>(context, listen: false).initializeGeofencing();
+
+      // Get current location first
+      await _getCurrentLocation();
+
+      await Provider.of<PlacesProvider>(context, listen: false)
+          .initializeGeofencing();
       _loadActiveGeofences();
       _setupLocationTracking();
-      _startFirebaseLocationListener();
+
       setState(() {
         _isLoading = false;
-        _locationStatus = _childLocation != null ? 'Child location updated' : 'Waiting for location...';
+        _locationStatus = _currentPosition != null
+            ? 'Location acquired'
+            : 'Location unavailable';
       });
-      if (_childLocation != null) {
-        _centerOnChild();
-      } else if (_currentPosition != null) {
-        _centerOnDevice(); // Center on device if child location is unavailable
-      } else if (Provider.of<PlacesProvider>(context, listen: false).geofences.isNotEmpty) {
+
+      // Center on current location if available
+      if (_currentPosition != null) {
+        _centerOnDevice();
+      } else if (Provider.of<PlacesProvider>(context, listen: false)
+          .geofences
+          .isNotEmpty) {
         _showAllGeofences();
       }
+
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _scheduleGeofenceCheck();
       });
     } catch (e) {
+      // ignore: avoid_print
       print('Error initializing geofencing: $e');
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _locationStatus = 'Error initializing: $e';
+        });
+      }
+    }
+  }
+
+  Future<void> _getCurrentLocation() async {
+    try {
       setState(() {
-        _isLoading = false;
-        _locationStatus = 'Error initializing: $e';
+        _locationStatus = 'Getting current location...';
       });
-     // _showErrorDialog('Initialization Error', 'Failed to initialize geofencing: $e');
+
+      // Check if location services are enabled
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        setState(() {
+          _locationStatus = 'Location services are disabled';
+          _initialPosition = _defaultPosition; // ensure map still renders
+        });
+        return;
+      }
+
+      // Check location permissions
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          setState(() {
+            _locationStatus = 'Location permissions are denied';
+            _initialPosition = _defaultPosition;
+          });
+          return;
+        }
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        setState(() {
+          _locationStatus = 'Location permissions are permanently denied';
+          _initialPosition = _defaultPosition;
+        });
+        return;
+      }
+
+      // Get current position
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 10),
+      );
+
+      setState(() {
+        _currentPosition = position;
+        _initialPosition = gmaps.CameraPosition(
+          target: gmaps.LatLng(position.latitude, position.longitude),
+          zoom: 15,
+        );
+        _locationStatus = 'Current location acquired';
+        _updateMarkers();
+      });
+    } catch (e) {
+      // ignore: avoid_print
+      setState(() {
+        _locationStatus = 'Error getting location: $e';
+        _initialPosition = _defaultPosition; // Use default position as fallback
+      });
     }
   }
 
   Future<void> _loadCustomIcons() async {
     try {
-      _childIcon = await gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueGreen);
-      _deviceIcon = await gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueBlue);
+      _childIcon = await gmaps.BitmapDescriptor.defaultMarkerWithHue(
+          gmaps.BitmapDescriptor.hueGreen);
+      _deviceIcon = await gmaps.BitmapDescriptor.defaultMarkerWithHue(
+          gmaps.BitmapDescriptor.hueBlue);
     } catch (e) {
-      print('Error loading custom icons: $e');
-      _childIcon = gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueBlue);
-      _deviceIcon = gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueRed); // Default for device
+      // ignore: avoid_print
+      _childIcon = gmaps.BitmapDescriptor.defaultMarkerWithHue(
+          gmaps.BitmapDescriptor.hueBlue);
+      _deviceIcon = gmaps.BitmapDescriptor.defaultMarkerWithHue(
+          gmaps.BitmapDescriptor.hueRed);
     }
   }
 
   void _loadActiveGeofences() {
-    setState(() {
-      final geofences = Provider.of<PlacesProvider>(context, listen: false).geofences;
-      print('Loaded ${geofences.length} geofences: ${geofences.map((g) => "${g.placeName}: (${g.latitude}, ${g.longitude})")}');
-      _updateGeofenceCircles(geofences);
-    });
-  }
-
-  void _startFirebaseLocationListener() {
-    try {
-      final ref = FirebaseDatabase.instance.ref('test_write_location');
-      _firebaseSubscription = ref.limitToLast(1).onValue.listen(
-        (event) {
-          if (event.snapshot.exists) {
-            try {
-              final data = Map<String, dynamic>.from(event.snapshot.children.first.value as Map);
-              double latitude = data['latitude'];
-              double longitude = data['longitude'];
-              setState(() {
-                _childLocation = gmaps.LatLng(latitude, longitude);
-                _locationStatus = 'Child location updated';
-                _updateMarkers();
-                if (_mapController != null && _childLocation != null) {
-                  _centerOnChild();
-                }
-              });
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                _scheduleGeofenceCheck();
-              });
-            } catch (e) {
-              print('Error parsing location data: $e');
-              setState(() {
-                _locationStatus = 'Error parsing location data';
-                _childLocation = null;
-                _updateMarkers();
-              });
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                _scheduleGeofenceCheck();
-              });
-            }
-          } else {
-            setState(() {
-              _locationStatus = 'No location data available';
-              _childLocation = null;
-              _updateMarkers();
-            });
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              _scheduleGeofenceCheck();
-            });
-          }
-        },
-        onError: (error) {
-          print('Firebase listener error: $error');
-          setState(() {
-            _locationStatus = 'Firebase connection error';
-          });
-        },
-      );
-    } catch (e) {
-      print('Error setting up Firebase listener: $e');
-      setState(() {
-        _locationStatus = 'Failed to connect to Firebase';
-      });
-    }
+    final geofences =
+        Provider.of<PlacesProvider>(context, listen: false).geofences;
+    // ignore: avoid_print
+    _updateGeofenceCircles(geofences);
   }
 
   void _setupLocationTracking() {
@@ -176,56 +206,55 @@ class _GeofencingMapsPageState extends State<GeofencingMapsPage> {
         accuracy: LocationAccuracy.high,
         distanceFilter: 10,
       );
-      _positionStream = Geolocator.getPositionStream(locationSettings: locationSettings).listen(
+      _positionStream =
+          Geolocator.getPositionStream(locationSettings: locationSettings)
+              .listen(
         (position) {
+          if (!mounted) return;
           setState(() {
             _currentPosition = position;
             _updateMarkers();
           });
+          // ✅ Critical fix: evaluate geofence transitions immediately on movement
+          _scheduleGeofenceCheck();
         },
         onError: (error) {
+          // ignore: avoid_print
           print('Location stream error: $error');
-          setState(() {
-            _locationStatus = 'Location stream error: $error';
-          });
+          if (mounted) {
+            setState(() {
+              _locationStatus = 'Location stream error: $error';
+            });
+          }
         },
       );
     } catch (e) {
-      print('Error setting up location tracking: $e');
-      setState(() {
-        _locationStatus = 'Error setting up location tracking: $e';
-      });
+      if (mounted) {
+        setState(() {
+          _locationStatus = 'Error setting up location tracking: $e';
+        });
+      }
     }
   }
 
   void _updateMarkers() {
     setState(() {
       _markers.clear();
-      // Add child location marker
-      if (_childLocation != null) {
-        _markers.add(
-          gmaps.Marker(
-            markerId: const gmaps.MarkerId('child_location'),
-            position: _childLocation!,
-            icon: _childIcon ?? gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueBlue),
-            infoWindow: gmaps.InfoWindow(
-              title: 'Child Location',
-              snippet: 'Live tracked location\nLat: ${_childLocation!.latitude.toStringAsFixed(6)}\nLng: ${_childLocation!.longitude.toStringAsFixed(6)}',
-            ),
-            onTap: _showChildLocationInfo,
-          ),
-        );
-      }
-      // Add device location marker
+
+      // Add device location marker (current location)
       if (_currentPosition != null) {
         _markers.add(
           gmaps.Marker(
             markerId: const gmaps.MarkerId('device_location'),
-            position: gmaps.LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
-            icon: _deviceIcon ?? gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueRed),
+            position: gmaps.LatLng(
+                _currentPosition!.latitude, _currentPosition!.longitude),
+            icon: _deviceIcon ??
+                gmaps.BitmapDescriptor.defaultMarkerWithHue(
+                    gmaps.BitmapDescriptor.hueBlue),
             infoWindow: gmaps.InfoWindow(
-              title: 'Device Location',
-              snippet: 'Child location location\nLat: ${_currentPosition!.latitude.toStringAsFixed(6)}\nLng: ${_currentPosition!.longitude.toStringAsFixed(6)}',
+              title: ' Current Location',
+              snippet:
+                  'Device location\nLat: ${_currentPosition!.latitude.toStringAsFixed(6)}\nLng: ${_currentPosition!.longitude.toStringAsFixed(6)}',
             ),
             onTap: _showDeviceLocationInfo,
           ),
@@ -238,12 +267,15 @@ class _GeofencingMapsPageState extends State<GeofencingMapsPage> {
     setState(() {
       _circles.clear();
       for (final geofence in geofences) {
-        print('Adding circle for geofence: ${geofence.placeName}, lat: ${geofence.latitude}, lng: ${geofence.longitude}, radius: ${geofence.radius}');
+        // ignore: avoid_print
+        print(
+            'Adding circle for geofence: ${geofence.placeName}, lat: ${geofence.latitude}, lng: ${geofence.longitude}, radius: ${geofence.radius}');
         if (!geofence.isExpired && geofence.isActive) {
-          final isWithinTimeWindow = geofence.isWithinTimeWindow(TimeOfDay.now());
-          final isChildInside = _isChildInsideGeofence(geofence);
+          final isWithinTimeWindow =
+              geofence.isWithinTimeWindow(TimeOfDay.now());
+          final isDeviceInside = _isDeviceInsideGeofence(geofence);
           Color circleColor;
-          if (isChildInside && isWithinTimeWindow) {
+          if (isDeviceInside && isWithinTimeWindow) {
             circleColor = Colors.green;
           } else if (isWithinTimeWindow) {
             circleColor = Colors.orange;
@@ -265,225 +297,214 @@ class _GeofencingMapsPageState extends State<GeofencingMapsPage> {
     });
   }
 
-  bool _isChildInsideGeofence(Geofence geofence) {
-    if (_childLocation == null) return false;
+  bool _isDeviceInsideGeofence(Geofence geofence) {
+    if (_currentPosition == null) return false;
     final distance = Geolocator.distanceBetween(
-      _childLocation!.latitude,
-      _childLocation!.longitude,
+      _currentPosition!.latitude,
+      _currentPosition!.longitude,
       geofence.latitude,
       geofence.longitude,
     );
     return distance <= geofence.radius;
   }
 
-  Map<String, bool> _lastNotificationState = {}; // Track last notification state for each geofence
-  Map<String, DateTime> _lastNotificationTime = {}; // Track when we last sent a notification
-  Map<String, bool> _lastTimeWindowState = {};
-  static const Duration _notificationCooldown = Duration(minutes: 1); // Cooldown period between notifications
-  DateTime? _appStartTime;
-
-  // ... existing methods ...
-
-  // void _scheduleGeofenceCheck() {
-  //   final geofences = Provider.of<PlacesProvider>(context, listen: false).geofences;
-    
-  //   if (_childLocation == null) {
-  //     // Check if there are any active geofences within time window
-  //     if (geofences.any((g) => g.isActive && !g.isExpired && g.isWithinTimeWindow(TimeOfDay.now()))) {
-  //       _showGeofenceNotification(null, false, 'Child location not available during active geofence time window!');
-  //       PushNotification.triggerPushNotification(
-  //         title: 'Geofencing Alert',
-  //         body: 'Child location not available during active geofence time window!',
-  //       );
-  //     }
-  //     return;
-  //   }
-
-  //   final currentTime = TimeOfDay.now();
-  //   final now = DateTime.now();
-
-  //   for (final geofence in geofences) {
-  //     if (!geofence.isActive || geofence.isExpired) continue;
-      
-  //     final isInside = _isChildInsideGeofence(geofence);
-  //     final isWithinTimeWindow = geofence.isWithinTimeWindow(currentTime);
-  //     final geofenceKey = geofence.id.toString();
-      
-  //     // Only process if within time window
-  //     if (isWithinTimeWindow) {
-  //       // Check if we need to send a notification (state changed or enough time passed)
-  //       final lastState = _lastNotificationState[geofenceKey];
-  //       final lastNotificationTime = _lastNotificationTime[geofenceKey];
-  //       final shouldNotify = lastState != isInside || 
-  //         (lastNotificationTime == null || 
-  //          now.difference(lastNotificationTime) > _notificationCooldown);
-
-  //       if (shouldNotify) {
-  //         if (isInside) {
-  //           // Child is inside the geofence during scheduled time
-  //           _showGeofenceNotification(geofence, true, 'Child is at ${geofence.placeName} as scheduled!');
-  //           PushNotification.triggerPushNotification(
-  //             title: 'Geofencing Alert - Arrival',
-  //             body: 'Child has arrived at ${geofence.placeName} as scheduled!',
-  //           );
-  //           print('DEBUG: Child INSIDE geofence ${geofence.placeName} during scheduled time');
-  //         } else {
-  //           // Child should be at this geofence but is not
-  //           _showGeofenceNotification(geofence, false, 'Child should be at ${geofence.placeName} now!');
-  //           PushNotification.triggerPushNotification(
-  //             title: 'Geofencing Alert - Missing',
-  //             body: 'Child should be at ${geofence.placeName} but is not there!',
-  //           );
-  //           print('DEBUG: Child OUTSIDE geofence ${geofence.placeName} during scheduled time');
-  //         }
-          
-  //         // Update tracking variables
-  //         _lastNotificationState[geofenceKey] = isInside;
-  //         _lastNotificationTime[geofenceKey] = now;
-  //       }
-  //     } else {
-  //       // Outside time window - reset state
-  //       _lastNotificationState.remove(geofenceKey);
-  //       _lastNotificationTime.remove(geofenceKey);
-  //     }
-  //   }
-
-  //   _updateGeofenceCircles(geofences);
-  // }
   void _scheduleGeofenceCheck() {
-  final geofences = Provider.of<PlacesProvider>(context, listen: false).geofences;
-  
-  if (_childLocation == null) {
-    // Check if there are any active geofences within time window
-    final activeGeofencesInTimeWindow = geofences.where(
-      (g) => g.isActive && !g.isExpired && g.isWithinTimeWindow(TimeOfDay.now())
-    ).toList();
-    
-    if (activeGeofencesInTimeWindow.isNotEmpty) {
-      _showGeofenceNotification(null, false, 'Child location not available during active geofence time window!');
-      PushNotification.triggerPushNotification(
-        title: 'Geofencing Alert - No Location',
-        body: 'Child location not available during active geofence time window!',
-      );
+    final geofences =
+        Provider.of<PlacesProvider>(context, listen: false).geofences;
+
+    if (_currentPosition == null) {
+      // If we have any active geofences within their time window, alert that location is unavailable
+      final activeGeofencesInTimeWindow = geofences
+          .where((g) =>
+              g.isActive &&
+              !g.isExpired &&
+              g.isWithinTimeWindow(TimeOfDay.now()))
+          .toList();
+
+      if (activeGeofencesInTimeWindow.isNotEmpty) {
+        _showGeofenceNotification(null, false,
+            'Device location not available during active geofence time window!');
+        PushNotification.triggerPushNotification(
+          title: 'Geofencing Alert - No Location',
+          body:
+              'Device location not available during active geofence time window!',
+        );
+      }
+      return;
     }
-    return;
+
+    final currentTime = TimeOfDay.now();
+    final now = DateTime.now();
+
+    for (final geofence in geofences) {
+      if (!geofence.isActive || geofence.isExpired) continue;
+
+      final isInside = _isDeviceInsideGeofence(geofence);
+      final isWithinTimeWindow = geofence.isWithinTimeWindow(currentTime);
+      final geofenceKey = geofence.id.toString();
+
+      final lastState = _lastNotificationState[geofenceKey];
+      final lastTime = _lastNotificationTime[geofenceKey];
+      final lastWindowState = _lastTimeWindowState[geofenceKey] ?? false;
+
+      // ✅ Fix #2: allow notifications exactly at cooldown boundary
+      final enoughTimePassed =
+          lastTime == null || now.difference(lastTime) >= _notificationCooldown;
+      
+      // --- NEW: fire immediately when within window AND outside ---
+if (isWithinTimeWindow && !isInside) {
+  final last = _lastNotificationTime[geofenceKey];
+  final cooldownOk = last == null || now.difference(last) >= _notificationCooldown;
+
+  if (cooldownOk) {
+    _showGeofenceNotification(
+      geofence,
+      false,
+      'Child should be at ${geofence.placeName} now!',
+    );
+    PushNotification.triggerPushNotification(
+      title: 'Geofencing Alert - Absent',
+      body: 'Child should be at ${geofence.placeName} now!',
+    );
+    _lastNotificationTime[geofenceKey] = now;
   }
 
-  final currentTime = TimeOfDay.now();
-  final now = DateTime.now();
-
-  for (final geofence in geofences) {
-    if (!geofence.isActive || geofence.isExpired) continue;
-    
-    final isInside = _isChildInsideGeofence(geofence);
-    final isWithinTimeWindow = geofence.isWithinTimeWindow(currentTime);
-    final geofenceKey = geofence.id.toString();
-    
-    // Get previous states
-    final lastState = _lastNotificationState[geofenceKey];
-    final lastNotificationTime = _lastNotificationTime[geofenceKey];
-    final lastTimeWindowState = _lastTimeWindowState[geofenceKey] ?? false;
-    
-    // Check if enough time has passed since last notification
-    final enoughTimePassed = lastNotificationTime == null || 
-        now.difference(lastNotificationTime) > _notificationCooldown;
-    
-    // Handle time window changes
-    if (lastTimeWindowState != isWithinTimeWindow && enoughTimePassed) {
-      if (isWithinTimeWindow) {
-        // Time window just started
-        if (isInside) {
-          _showGeofenceNotification(geofence, true, 'Time window started: Child is at ${geofence.placeName} as expected!');
-          PushNotification.triggerPushNotification(
-            title: 'Geofencing Alert - Time Window Started',
-            body: 'Time window started: Child is at ${geofence.placeName} as expected!',
-          );
-        } else {
-          _showGeofenceNotification(geofence, false, 'Time window started: Child should be at ${geofence.placeName} now!');
-          PushNotification.triggerPushNotification(
-            title: 'Geofencing Alert - Time Window Started',
-            body: 'Time window started: Child should be at ${geofence.placeName} now!',
-          );
-        }
-        _lastNotificationTime[geofenceKey] = now;
-        _lastNotificationState[geofenceKey] = isInside;
-      } else if (lastTimeWindowState) {
-        // Time window just ended
-        _showGeofenceNotification(geofence, false, 'Time window ended for ${geofence.placeName}');
-        PushNotification.triggerPushNotification(
-          title: 'Geofencing Alert - Time Window Ended',
-          body: 'Time window ended for ${geofence.placeName}',
-        );
-        _lastNotificationTime[geofenceKey] = now;
-        // Clear the state when time window ends
-        _lastNotificationState.remove(geofenceKey);
-      }
-      _lastTimeWindowState[geofenceKey] = isWithinTimeWindow;
-    }
-    
-    // Handle location changes within active time window
-    else if (isWithinTimeWindow && lastState != null && lastState != isInside && enoughTimePassed) {
-      if (isInside) {
-        // Child just arrived
-        _showGeofenceNotification(geofence, true, 'Child has arrived at ${geofence.placeName}!');
-        PushNotification.triggerPushNotification(
-          title: 'Geofencing Alert - Arrival',
-          body: 'Child has arrived at ${geofence.placeName}!',
-        );
-      } else{
-        // Child just left
-          _showGeofenceNotification(geofence, false, 'Child has left ${geofence.placeName} during scheduled time!');
-        PushNotification.triggerPushNotification(
-          title: 'Geofencing Alert - Departure',
-          body: 'Child has left ${geofence.placeName} during scheduled time!',
-        );
-      }
-      _lastNotificationTime[geofenceKey] = now;
-      _lastNotificationState[geofenceKey] = isInside;
-    }
-    
-    // Handle initial state when geofence is first processed
-    else if (isWithinTimeWindow && lastState == null && enoughTimePassed) {
-      // This is the first time we're checking this geofence in the time window
-      // Only notify if it's been long enough since app started to avoid immediate notifications
-      if (now.difference(_appStartTime ?? now).inMinutes > 2) {
-        if (isInside) {
-          _showGeofenceNotification(geofence, true, 'Child is at ${geofence.placeName} as scheduled!');
-          PushNotification.triggerPushNotification(
-            title: 'Geofencing Alert - Status Check',
-            body: 'Child is at ${geofence.placeName} as scheduled!',
-          );
-        } else {
-          _showGeofenceNotification(geofence, false, 'Child should be at ${geofence.placeName} now!');
-          PushNotification.triggerPushNotification(
-            title: 'Geofencing Alert - Status Check',
-            body: 'Child should be at ${geofence.placeName} now!',
-          );
-        }
-        _lastNotificationTime[geofenceKey] = now;
-      }
-      _lastNotificationState[geofenceKey] = isInside;
-      _lastTimeWindowState[geofenceKey] = isWithinTimeWindow;
-    }
-    
-    // Update states for next check
-    if (!isWithinTimeWindow) {
-      // Clear states when outside time window
-      _lastNotificationState.remove(geofenceKey);
-      _lastTimeWindowState[geofenceKey] = false;
-    } else {
-      _lastTimeWindowState[geofenceKey] = isWithinTimeWindow;
-      if (_lastNotificationState[geofenceKey] == null) {
-        _lastNotificationState[geofenceKey] = isInside;
-      }
-    }
-  }
-
-  _updateGeofenceCircles(geofences);
+  // Lock state so we don’t double-notify later in this loop
+  _lastNotificationState[geofenceKey] = false;
+  _lastTimeWindowState[geofenceKey] = true;
+  continue; // move to next geofence
 }
 
-  void _showGeofenceNotification(Geofence? geofence, bool isInside, String message) {
+
+      // Handle time window transitions
+      if (lastWindowState != isWithinTimeWindow && enoughTimePassed) {
+        if (isWithinTimeWindow) {
+          // Time window just started
+          if (isInside) {
+            _showGeofenceNotification(geofence, true,
+                'Time window started: Child are at ${geofence.placeName} as expected!');
+            PushNotification.triggerPushNotification(
+              title: 'Geofencing Alert - Time Window Started',
+              body:
+                  'Time window started: Child are at ${geofence.placeName} as expected!',
+            );
+          } else {
+            _showGeofenceNotification(geofence, false,
+                'Time window started: Child should be at ${geofence.placeName} now!');
+            PushNotification.triggerPushNotification(
+              title: 'Geofencing Alert - Time Window Started',
+              body:
+                  'Time window started: Child should be at ${geofence.placeName} now!',
+            );
+          }
+          _lastNotificationTime[geofenceKey] = now;
+          _lastNotificationState[geofenceKey] = isInside;
+        } else if (lastWindowState) {
+          // Time window just ended
+          _showGeofenceNotification(
+              geofence, false, 'Time window ended for ${geofence.placeName}');
+          PushNotification.triggerPushNotification(
+            title: 'Geofencing Alert - Time Window Ended',
+            body: 'Time window ended for ${geofence.placeName}',
+          );
+          _lastNotificationTime[geofenceKey] = now;
+          _lastNotificationState.remove(geofenceKey);
+        }
+        _lastTimeWindowState[geofenceKey] = isWithinTimeWindow;
+      }
+
+      // Handle arrivals/departures during active window
+      else if (isWithinTimeWindow &&
+          lastState != null &&
+          lastState != isInside &&
+          enoughTimePassed) {
+        if (isInside) {
+          _showGeofenceNotification(
+              geofence, true, 'You have arrived at ${geofence.placeName}!');
+          PushNotification.triggerPushNotification(
+            title: 'Geofencing Alert - Arrival',
+            body: 'You have arrived at ${geofence.placeName}!',
+          );
+        } else {
+          _showGeofenceNotification(geofence, false,
+              'You have left ${geofence.placeName} during scheduled time!');
+          PushNotification.triggerPushNotification(
+            title: 'Geofencing Alert - Departure',
+            body: 'You have left ${geofence.placeName} during scheduled time!',
+          );
+        }
+        _lastNotificationTime[geofenceKey] = now;
+        _lastNotificationState[geofenceKey] = isInside;
+      }
+
+      // Initial evaluation inside an active window (avoid immediate spam on app launch)
+      // else if (isWithinTimeWindow && lastState == null && enoughTimePassed) {
+      //   if (now.difference(_appStartTime ?? now).inMinutes > 2) {
+      //     if (isInside) {
+      //       _showGeofenceNotification(geofence, true, 'You are at ${geofence.placeName} as scheduled!');
+      //       PushNotification.triggerPushNotification(
+      //         title: 'Geofencing Alert - Status Check',
+      //         body: 'You are at ${geofence.placeName} as scheduled!',
+      //       );
+      //     } else {
+      //       _showGeofenceNotification(geofence, false, 'You should be at ${geofence.placeName} now!');
+      //       PushNotification.triggerPushNotification(
+      //         title: 'Geofencing Alert - Status Check',
+      //         body: 'You should be at ${geofence.placeName} now!',
+      //       );
+      //     }
+      //     _lastNotificationTime[geofenceKey] = now;
+      //   }
+      //   _lastNotificationState[geofenceKey] = isInside;
+      //   _lastTimeWindowState[geofenceKey] = isWithinTimeWindow;
+      // }
+      // Initial evaluation inside an active window.
+// Notify immediately if NOT inside (!isInside). If inside, keep 2-minute grace.
+      else if (isWithinTimeWindow && lastState == null && enoughTimePassed) {
+        final allowNow = !isInside || // <-- negation does the trick
+            now.difference(_appStartTime ?? now).inMinutes > 2;
+
+        if (allowNow) {
+          if (isInside) {
+            _showGeofenceNotification(geofence, true,
+                'You are at ${geofence.placeName} as scheduled!');
+            PushNotification.triggerPushNotification(
+              title: 'Geofencing Alert - Status Check',
+              body: 'You are at ${geofence.placeName} as scheduled!',
+            );
+          } else {
+            _showGeofenceNotification(
+                geofence, false, 'You should be at ${geofence.placeName} now!');
+            PushNotification.triggerPushNotification(
+              title: 'Geofencing Alert - Status Check',
+              body: 'You should be at ${geofence.placeName} now!',
+            );
+          }
+          _lastNotificationTime[geofenceKey] = now;
+        }
+
+        _lastNotificationState[geofenceKey] = isInside;
+        _lastTimeWindowState[geofenceKey] = isWithinTimeWindow;
+      }
+
+      // Keep window state tidy
+      if (!isWithinTimeWindow) {
+        _lastNotificationState.remove(geofenceKey);
+        _lastTimeWindowState[geofenceKey] = false;
+      } else {
+        _lastTimeWindowState[geofenceKey] = isWithinTimeWindow;
+        _lastNotificationState[geofenceKey] ??= isInside;
+      }
+    }
+
+    _updateGeofenceCircles(geofences);
+  }
+
+  void _showGeofenceNotification(
+      Geofence? geofence, bool isInside, String message) {
+    if (!mounted) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(message),
@@ -494,48 +515,23 @@ class _GeofencingMapsPageState extends State<GeofencingMapsPage> {
     });
   }
 
-  void _showChildLocationInfo() {
-    if (_childLocation == null) return;
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Child Location'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Latitude: ${_childLocation!.latitude.toStringAsFixed(6)}'),
-            Text('Longitude: ${_childLocation!.longitude.toStringAsFixed(6)}'),
-            const SizedBox(height: 10),
-            Text('Status: $_locationStatus'),
-            if (_currentPosition != null)
-              Text('Accuracy: ±${_currentPosition!.accuracy.toStringAsFixed(1)}m'),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
-    );
-  }
-
   void _showDeviceLocationInfo() {
-    if (_currentPosition == null) return;
+    if (_currentPosition == null || !mounted) return;
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Device Location'),
+        title: const Text('Your Current Location'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('Latitude: ${_currentPosition!.latitude.toStringAsFixed(6)}'),
-            Text('Longitude: ${_currentPosition!.longitude.toStringAsFixed(6)}'),
+            Text(
+                'Longitude: ${_currentPosition!.longitude.toStringAsFixed(6)}'),
             const SizedBox(height: 10),
-            Text('Accuracy: ±${_currentPosition!.accuracy.toStringAsFixed(1)}m'),
+            Text(
+                'Accuracy: ±${_currentPosition!.accuracy.toStringAsFixed(1)}m'),
+            Text('Status: $_locationStatus'),
           ],
         ),
         actions: [
@@ -546,21 +542,6 @@ class _GeofencingMapsPageState extends State<GeofencingMapsPage> {
         ],
       ),
     );
-  }
-
-  void _centerOnChild() {
-    if (_childLocation != null && _mapController != null) {
-      _mapController!.animateCamera(
-        gmaps.CameraUpdate.newCameraPosition(
-          gmaps.CameraPosition(
-            target: _childLocation!,
-            zoom: 18.0,
-          ),
-        ),
-      );
-    } else {
-      print('Cannot center on child: mapController or childLocation is null');
-    }
   }
 
   void _centerOnDevice() {
@@ -568,22 +549,26 @@ class _GeofencingMapsPageState extends State<GeofencingMapsPage> {
       _mapController!.animateCamera(
         gmaps.CameraUpdate.newCameraPosition(
           gmaps.CameraPosition(
-            target: gmaps.LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
+            target: gmaps.LatLng(
+                _currentPosition!.latitude, _currentPosition!.longitude),
             zoom: 18.0,
           ),
         ),
       );
     } else {
-      print('Cannot center on device: mapController or currentPosition is null');
+      // ignore: avoid_print
+      print(
+          'Cannot center on device: mapController or currentPosition is null');
     }
   }
 
   void _showAllGeofences() {
-    final geofences = Provider.of<PlacesProvider>(context, listen: false).geofences;
+    final geofences =
+        Provider.of<PlacesProvider>(context, listen: false).geofences;
     if (geofences.isEmpty || _mapController == null) return;
     final bounds = _calculateBounds([
-      if (_childLocation != null) _childLocation!,
-      if (_currentPosition != null) gmaps.LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
+      if (_currentPosition != null)
+        gmaps.LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
       ...geofences.map((g) => gmaps.LatLng(g.latitude, g.longitude)),
     ]);
     _mapController!.animateCamera(
@@ -594,8 +579,8 @@ class _GeofencingMapsPageState extends State<GeofencingMapsPage> {
   gmaps.LatLngBounds _calculateBounds(List<gmaps.LatLng> points) {
     if (points.isEmpty) {
       return gmaps.LatLngBounds(
-        southwest: const gmaps.LatLng(5.6037, -0.1870),
-        northeast: const gmaps.LatLng(5.6037, -0.1870),
+        southwest: gmaps.LatLng(5.6037, -0.1870),
+        northeast: gmaps.LatLng(5.6037, -0.1870),
       );
     }
     double minLat = points.first.latitude;
@@ -618,196 +603,220 @@ class _GeofencingMapsPageState extends State<GeofencingMapsPage> {
   Widget build(BuildContext context) {
     return Consumer<PlacesProvider>(
       builder: (context, provider, child) {
-        return Scaffold(
-          body: Stack(
-            children: [
-              gmaps.GoogleMap(
-                onMapCreated: (controller) {
-                  _mapController = controller;
-                  if (provider.geofences.isNotEmpty) {
-                    _showAllGeofences();
-                  } else if (_childLocation != null) {
-                    _centerOnChild();
-                  } else if (_currentPosition != null) {
-                    _centerOnDevice();
-                  }
-                },
-                initialCameraPosition: _initialPosition,
-                markers: _markers,
-                circles: _circles,
-                myLocationEnabled: false,
-                myLocationButtonEnabled: false,
-                zoomControlsEnabled: true,
-                mapToolbarEnabled: false,
-                compassEnabled: true,
-                trafficEnabled: false,
-                buildingsEnabled: true,
-                mapType: gmaps.MapType.normal,
-              ),
-              if (_isLoading)
-                Container(
-                  color: Colors.white.withOpacity(0.8),
-                  child: Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const CircularProgressIndicator(),
-                        const SizedBox(height: 16),
-                        Text(_locationStatus),
-                        const SizedBox(height: 8),
-                        TextButton(
-                          onPressed: () {
-                            setState(() {
-                              _isLoading = false;
-                            });
-                          },
-                          child: const Text('Skip Loading'),
-                        ),
-                      ],
+        return SafeArea(
+          child: Scaffold(
+            body: Stack(
+              children: [
+                // Only show the map when we have an initial position
+                if (_initialPosition != null)
+                  gmaps.GoogleMap(
+                    onMapCreated: (controller) {
+                      _mapController = controller;
+                      if (provider.geofences.isNotEmpty) {
+                        _showAllGeofences();
+                      } else if (_currentPosition != null) {
+                        _centerOnDevice();
+                      }
+                    },
+                    initialCameraPosition: _initialPosition!,
+                    markers: _markers,
+                    circles: _circles,
+                    myLocationEnabled: false,
+                    myLocationButtonEnabled: false,
+                    zoomControlsEnabled: true,
+                    mapToolbarEnabled: false,
+                    compassEnabled: true,
+                    trafficEnabled: false,
+                    buildingsEnabled: true,
+                    mapType: gmaps.MapType.normal,
+                  )
+                else
+                  // Show loading while getting initial position
+                  Container(
+                    color: Colors.grey[200],
+                    child: const Center(
+                      child: CircularProgressIndicator(),
                     ),
                   ),
-                ),
-              if (!_isLoading)
-                Positioned(
-                  top: 16,
-                  left: 16,
-                  right: 16,
-                  child: Card(
-                    elevation: 4,
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
+
+                if (_isLoading)
+                  Container(
+                    color: Colors.white.withOpacity(0.8),
+                    child: Center(
                       child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          // Row(
-                          //   children: [
-                          //     Icon(
-                          //       Icons.location_on,
-                          //       color: _childLocation != null || _currentPosition != null ? Colors.green : Colors.grey,
-                          //       size: 20,
-                          //     ),
-                          //     const SizedBox(width: 8),
-                          //     Expanded(
-                          //       child: Text(
-                          //         _locationStatus,
-                          //         style: TextStyle(
-                          //           fontWeight: FontWeight.w500,
-                          //           color: _childLocation != null || _currentPosition != null ? Colors.green : Colors.grey[600],
-                          //         ),
-                          //       ),
-                          //     ),
-                          //   ],
-                          // ),
+                          const CircularProgressIndicator(),
+                          const SizedBox(height: 16),
+                          Text(_locationStatus),
                           const SizedBox(height: 8),
-                          Text(
-                            'Active Geofences: ${provider.geofences.length}',
-                            style: const TextStyle(fontSize: 12, color: Colors.blue),
+                          TextButton(
+                            onPressed: () {
+                              setState(() {
+                                _isLoading = false;
+                                _initialPosition =
+                                    _initialPosition ?? _defaultPosition;
+                              });
+                            },
+                            child: const Text(''),
                           ),
-                          if (_currentPosition != null) ...[
+                        ],
+                      ),
+                    ),
+                  ),
+
+                if (!_isLoading)
+                  Positioned(
+                    top: 16,
+                    left: 16,
+                    right: 16,
+                    child: Card(
+                      elevation: 4,
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
                             const SizedBox(height: 8),
                             Text(
-                              'Device: ${_currentPosition!.latitude.toStringAsFixed(6)}, ${_currentPosition!.longitude.toStringAsFixed(6)}',
-                              style: const TextStyle(fontSize: 12, color: Colors.blue),
+                              'Active Geofences: ${provider.geofences.length}',
+                              style: const TextStyle(
+                                  fontSize: 12, color: Colors.blue),
+                            ),
+                            if (_currentPosition != null) ...[
+                              const SizedBox(height: 8),
+                              Text(
+                                'Device Location: ${_currentPosition!.latitude.toStringAsFixed(6)}, ${_currentPosition!.longitude.toStringAsFixed(6)}',
+                                style: const TextStyle(
+                                    fontSize: 12, color: Colors.blue),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+
+                if (_showGeofenceInfo && !_isLoading)
+                  Positioned(
+                    bottom: 16,
+                    left: 16,
+                    right: 16,
+                    child: Card(
+                      elevation: 4,
+                      child: Container(
+                        height: 180,
+                        padding: const EdgeInsets.all(12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: const [
+                            Text(
+                              'Geofence Legend',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                              ),
+                            ),
+                            SizedBox(height: 8),
+                            _LegendItem(
+                                color: Colors.green,
+                                text: 'You are present at scheduled time'),
+                            _LegendItem(
+                                color: Colors.orange,
+                                text: 'Time window active, you are absent'),
+                            _LegendItem(
+                                color: Colors.grey,
+                                text: 'Outside time window'),
+                            Divider(),
+                            Text(
+                              'Markers',
+                              style: TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                            SizedBox(height: 4),
+                            Row(
+                              children: [
+                                Icon(Icons.location_on,
+                                    color: Colors.blue, size: 16),
+                                SizedBox(width: 4),
+                                Text('Your Current Location',
+                                    style: TextStyle(fontSize: 12)),
+                              ],
                             ),
                           ],
-                        ],
+                        ),
                       ),
                     ),
                   ),
-                ),
-              if (_showGeofenceInfo && !_isLoading)
-                Positioned(
-                  bottom: 16,
-                  left: 16,
-                  right: 16,
-                  child: Card(
-                    elevation: 4,
-                    child: Container(
-                      height: 220, // Increased height to accommodate new legend item
-                      padding: const EdgeInsets.all(12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Geofence Legend',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          _buildLegendItem(Colors.green, 'Child present at scheduled time'),
-                          _buildLegendItem(Colors.orange, 'Time window active, child absent'),
-                          _buildLegendItem(Colors.grey, 'Outside time window'),
-                          const Divider(),
-                          const Text(
-                            'Markers',
-                            style: TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          const SizedBox(height: 4),
-                          const Row(
-                            children: [
-                              Icon(Icons.person_pin, color: Colors.blue, size: 16),
-                              SizedBox(width: 4),
-                              Text('Child Location', style: TextStyle(fontSize: 12)),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          const Row(
-                            children: [
-                              Icon(Icons.phone_android, color: Colors.red, size: 16),
-                              SizedBox(width: 4),
-                              Text('Device Location', style: TextStyle(fontSize: 12)),
-                            ],
-                          ),
-                        ],
+              ],
+            ),
+            floatingActionButton: _isLoading
+                ? null
+                : Column(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      FloatingActionButton(
+                        heroTag: "refresh_btn",
+                        onPressed: _initializeGeofencing,
+                        backgroundColor: AppColors.primary,
+                        child: const Icon(Icons.refresh, color: Colors.white),
+                        mini: true,
                       ),
-                    ),
+                      const SizedBox(height: 10),
+                      FloatingActionButton(
+                        heroTag: "info_btn",
+                        onPressed: () {
+                          setState(() {
+                            _showGeofenceInfo = !_showGeofenceInfo;
+                          });
+                        },
+                        backgroundColor: AppColors.primary,
+                        child:
+                            const Icon(Icons.info_outline, color: Colors.white),
+                        mini: true,
+                      ),
+                      const SizedBox(height: 10),
+                      FloatingActionButton(
+                        heroTag: "zoom_btn",
+                        onPressed: _showAllGeofences,
+                        backgroundColor: AppColors.primary,
+                        child:
+                            const Icon(Icons.zoom_out_map, color: Colors.white),
+                        mini: true,
+                      ),
+                      const SizedBox(height: 10),
+                      FloatingActionButton(
+                        heroTag: "my_location_btn",
+                        onPressed: _centerOnDevice,
+                        backgroundColor: AppColors.primary,
+                        child:
+                            const Icon(Icons.my_location, color: Colors.white),
+                        mini: true,
+                      ),
+                    ],
                   ),
-                ),
-            ],
           ),
-          floatingActionButton: _isLoading
-              ? null
-              : Column(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    FloatingActionButton(
-                      heroTag: "refresh_btn",
-                      onPressed: _initializeGeofencing,
-                      backgroundColor: AppColors.primary,
-                      child: const Icon(Icons.refresh, color: Colors.white),
-                      mini: true,
-                    ),
-                    const SizedBox(height: 10),
-                    FloatingActionButton(
-                      heroTag: "info_btn",
-                      onPressed: () {
-                        setState(() {
-                          _showGeofenceInfo = !_showGeofenceInfo;
-                        });
-                      },
-                      backgroundColor: AppColors.primary,
-                      child: const Icon(Icons.info_outline, color: Colors.white),
-                      mini: true,
-                    ),
-                    const SizedBox(height: 10),
-                    FloatingActionButton(
-                      heroTag: "zoom_btn",
-                      onPressed: _showAllGeofences,
-                      backgroundColor: AppColors.primary,
-                      child: const Icon(Icons.zoom_out_map, color: Colors.white),
-                      mini: true,
-                    ),
-                  ],
-                ),
         );
       },
     );
   }
 
-  Widget _buildLegendItem(Color color, String text) {
+  @override
+  void dispose() {
+    _positionStream?.cancel();
+    _timeCheckTimer?.cancel();
+    _mapController?.dispose();
+    super.dispose();
+  }
+}
+
+class _LegendItem extends StatelessWidget {
+  final Color color;
+  final String text;
+  const _LegendItem({required this.color, required this.text});
+
+  @override
+  Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
@@ -831,14 +840,5 @@ class _GeofencingMapsPageState extends State<GeofencingMapsPage> {
         ],
       ),
     );
-  }
-
-  @override
-  void dispose() {
-    _positionStream?.cancel();
-    _firebaseSubscription?.cancel();
-    _timeCheckTimer?.cancel();
-    _mapController?.dispose();
-    super.dispose();
   }
 }

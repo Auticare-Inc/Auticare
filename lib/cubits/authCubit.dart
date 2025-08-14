@@ -10,15 +10,32 @@ class Authcubit extends Cubit<AuthState> {
   Authcubit({required this.repo}):super(AuthInitial());
   
 //check if user is already authenticated
-  void checkAuth()async{
-    final AppUser? user = await repo.getCurrentUser();
-    if(user!=null){
+  // void checkAuth()async{
+  //   final AppUser? user = await repo.getCurrentUser();
+  //   if(user!=null){
+  //     _currentUser = user;
+  //     emit(Authenticated(user));
+  //   } else {
+  //     emit(Unauthenticated());
+  //   }
+  // }
+  void checkAuth() async {
+  final AppUser? user = await repo.getCurrentUser();
+  if (user != null) {
+    // 🔍 Add check for profile completion
+    final bool profileExists = await repo.doesUserProfileExist(user.uid);
+    
+    if (profileExists) {
       _currentUser = user;
       emit(Authenticated(user));
     } else {
-      emit(Unauthenticated());
+      emit(Unverified(user)); // Custom state for incomplete signup
     }
+  } else {
+    emit(Unauthenticated());
   }
+}
+
 
   
   //get current user

@@ -1,98 +1,4 @@
-// import 'package:flutter/material.dart';
 
-// import '../utilities/placesPageUtils/appColors.dart';
-// import 'geoCard.dart';
-// import 'geoModels.dart';
-// import 'geoService.dart';
-
-
-// class GeofenceManagementPage extends StatefulWidget {
-//   @override
-//   _GeofenceManagementPageState createState() => _GeofenceManagementPageState();
-// }
-
-// class _GeofenceManagementPageState extends State<GeofenceManagementPage> {
-//   final EnhancedGeofencingService _geofencingService = EnhancedGeofencingService();
-//   List<Geofence> _geofences = [];
-
-//   @override
-//   void initState() {
-//     super.initState();
-//     _loadGeofences();
-//   }
-
-//   void _loadGeofences() {
-//     setState(() {
-//       _geofences = _geofencingService.activeGeofences;
-//     });
-//   }
-
-//   Future<void> _deleteGeofence(String geofenceId) async {
-//     await _geofencingService.removeGeofence(geofenceId);
-//     _loadGeofences();
-//   }
-
-//   Future<void> _toggleGeofence(Geofence geofence) async {
-//     // This would require updating the geofence service to support toggling
-//     // For now, you can implement this by removing and re-adding with different status
-//     _loadGeofences();
-//   }
-
-//   @override
-//   Widget build(BuildContext context) {
-//     return Scaffold(
-//       appBar: AppBar(
-//         title: Text('Geofence Management'),
-//         backgroundColor: AppColors.primary,
-//         foregroundColor: Colors.white,
-//       ),
-//       body: _geofences.isEmpty
-//           ? _buildEmptyState()
-//           : ListView.builder(
-//               itemCount: _geofences.length,
-//               itemBuilder: (context, index) {
-//                 final geofence = _geofences[index];
-//                 return GeofenceCard(
-//                   geofence: geofence,
-//                   onDelete: () => _deleteGeofence(geofence.id),
-//                   onToggle: () => _toggleGeofence(geofence),
-//                 );
-//               },
-//             ),
-//     );
-//   }
-
-//   Widget _buildEmptyState() {
-//     return Center(
-//       child: Column(
-//         mainAxisAlignment: MainAxisAlignment.center,
-//         children: [
-//           Icon(
-//             Icons.location_off,
-//             size: 64,
-//             color: AppColors.textSecondary,
-//           ),
-//           SizedBox(height: 16),
-//           Text(
-//             'No active geofences',
-//             style: TextStyle(
-//               fontSize: 18,
-//               color: AppColors.textSecondary,
-//             ),
-//           ),
-//           SizedBox(height: 8),
-//           Text(
-//             'Create places to set up geofences',
-//             style: TextStyle(
-//               fontSize: 14,
-//               color: AppColors.textSecondary,
-//             ),
-//           ),
-//         ],
-//       ),
-//     );
-//   }
-// }
 import 'package:autismapp/screens/placesPage.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -154,10 +60,7 @@ class _GeofenceManagementPageState extends State<GeofenceManagementPage> {
                 padding: EdgeInsets.fromLTRB(20, 0, 20, 24),
                 decoration: BoxDecoration(
                   color: Color(0xFFE8F4FD),
-                  // borderRadius: BorderRadius.only(
-                  //   topLeft: Radius.circular(24),
-                  //   topRight: Radius.circular(24),
-                  // ),
+
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,

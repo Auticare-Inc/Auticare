@@ -47,54 +47,88 @@ class _SignupPageState extends State<SignupPage> with TickerProviderStateMixin {
     ));
     _animationController.forward();
   }
+  
+void register() async {
+  
+  final String email = emailController.text.trim();
+  final String pw = passwordController.text;
+  final String name = nameController.text;
+  final String confirmPw = confirmPasswordController.text;
+  final String caregiverEmail = caregiverEmailController.text;
+  final String caregiverName = caregiverNameController.text;
+  final String childName = childNameController.text;
+  final String caregiverContact = caregiverContactController.text;
 
-  void register()async{
-
-    setState(() {
-    registerPressed = true;
-    });
-    final String email = emailController.text.trim();
-    final String pw = passwordController.text;
-    final String name = nameController.text;
-    final String confirmPw = confirmPasswordController.text;
-    final String caregiverEmail = caregiverEmailController.text;
-    final String caregiverName = caregiverNameController.text;
-    final String childName = childNameController.text;
-    final String caregiverContact = caregiverContactController.text;
-
-    // authCubit
-    final authCubit = context.read<Authcubit>();
-    // ensure fields are filled up
-    if (email.isNotEmpty && pw.isNotEmpty && name.isNotEmpty && confirmPw.isNotEmpty) {
-      if (pw == confirmPw) {
-        await authCubit.register(email, pw, name,caregiverEmail,caregiverName,childName,caregiverContact);
-        await Firestoredatabase.createCaregiverDetails(
-          childName: childName,
-          caregiverEmail: caregiverEmail, 
-          caregiverName: caregiverName, 
-          caregiverType: null,
-          caregiverContact: caregiverContact);
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Passwords don\'t match'),
-            backgroundColor: Colors.red.shade400,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          )
-        );
+  // authCubit
+  final authCubit = context.read<Authcubit>();
+  
+  // ensure fields are filled up
+  if (email.isNotEmpty && pw.isNotEmpty && name.isNotEmpty && confirmPw.isNotEmpty) {
+    if (pw == confirmPw) {
+      try {
+        await authCubit.register(email, pw, name, caregiverEmail, caregiverName, childName, caregiverContact);
+        
+        if (context.mounted && context.read<Authcubit>().state is Authenticated) {
+          await Firestoredatabase.createCaregiverDetails(
+            childName: childName,
+            caregiverEmail: caregiverEmail,
+            caregiverName: caregiverName,
+            caregiverType: null,
+            caregiverContact: caregiverContact
+          );
+          
+          // Show success message
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: const Text('Account created successfully!'),
+                backgroundColor: Colors.green.shade400,
+                behavior: SnackBarBehavior.floating,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            );
+            
+            // Wait a moment for the user to see the message, then navigate
+            await Future.delayed(const Duration(milliseconds: 1500));
+            if (context.mounted) {
+              context.goNamed('loginPage');
+            }
+          }
+        }
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Registration failed: ${e.toString()}'),
+              backgroundColor: Colors.red.shade400,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+          );
+        }
       }
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: const Text("Please enter required fields"),
-          backgroundColor: Colors.orange.shade400,
+          content: const Text('Passwords don\'t match'),
+          backgroundColor: Colors.red.shade400,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         )
       );
     }
+  } else {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text("Please enter required fields"),
+        backgroundColor: Colors.orange.shade400,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      )
+    );
   }
+  
+}
 
   @override
   void dispose() {
@@ -107,101 +141,6 @@ class _SignupPageState extends State<SignupPage> with TickerProviderStateMixin {
     super.dispose();
   }
 
-  // @override
-  // Widget build(BuildContext context) {
-  //   return Scaffold(
-  //     resizeToAvoidBottomInset: false,
-  //     body: Container(
-  //       decoration: const BoxDecoration(
-  //         gradient: LinearGradient(
-  //           begin: Alignment.topLeft,
-  //           end: Alignment.bottomRight,
-  //           colors: [
-  //             Color(0xFFE3F2FD),
-  //             Colors.white,
-  //             Color(0xFFF3E5F5),
-  //           ],
-  //         ),
-  //       ),
-  //       child: Stack(
-  //         children: [
-  //           // Decorative floating elements
-  //           Positioned(
-  //             top: 80,
-  //             left: 30,
-  //             child: Container(
-  //               width: 60,
-  //               height: 60,
-  //               decoration: BoxDecoration(
-  //                 color: Colors.blue.shade200.withOpacity(0.3),
-  //                 borderRadius: BorderRadius.circular(30),
-  //               ),
-  //             ),
-  //           ),
-  //           Positioned(
-  //             bottom: 150,
-  //             right: 40,
-  //             child: Container(
-  //               width: 40,
-  //               height: 40,
-  //               decoration: BoxDecoration(
-  //                 color: Colors.purple.shade200.withOpacity(0.3),
-  //                 borderRadius: BorderRadius.circular(20),
-  //               ),
-  //             ),
-  //           ),
-  //           Positioned(
-  //             top: 200,
-  //             right: 20,
-  //             child: Container(
-  //               width: 30,
-  //               height: 30,
-  //               decoration: BoxDecoration(
-  //                 color: Colors.green.shade200.withOpacity(0.3),
-  //                 borderRadius: BorderRadius.circular(15),
-  //               ),
-  //             ),
-  //           ),
-            
-  //           SafeArea(
-  //             child: FadeTransition(
-  //               opacity: _fadeAnimation,
-  //               child: SlideTransition(
-  //                 position: _slideAnimation,
-  //                 child: Padding(
-  //                   padding: const EdgeInsets.symmetric(horizontal: 32),
-  //                   child: Column(
-  //                     children: [
-  //                       const SizedBox(height: 20),
-  //                       // Header with logo
-  //                       _buildHeader(),
-  //                       const SizedBox(height: 40),
-                        
-  //                       // Main form container
-  //                       Expanded(
-  //                         child: SingleChildScrollView(
-  //                           child: Column(
-  //                             children: [
-  //                               _buildFormSection(),
-  //                               const SizedBox(height: 32),
-  //                               _buildSignupButton(),
-  //                               const SizedBox(height: 40),
-  //                               _buildBrandFooter(),
-  //                             ],
-  //                           ),
-  //                         ),
-  //                       ),
-  //                     ],
-  //                   ),
-  //                 ),
-  //               ),
-  //             ),
-  //           ),
-  //         ],
-  //       ),
-  //     ),
-  //   );
-  // }
    @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -519,48 +458,34 @@ class _SignupPageState extends State<SignupPage> with TickerProviderStateMixin {
   }
 
   Widget _buildSignupButton() {
-    return BlocListener<Authcubit,AuthState>(listener:(context,state){
-      if(state is Authloading && registerPressed){
+
+    return BlocListener<Authcubit, AuthState>(
+    listener: (context, state) {
+      if (state is Authloading) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Loading...'),
+            content: const Text('Creating account...'),
             backgroundColor: Colors.blue.shade400,
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           )
         );
-      } else if(state is Authenticated && registerPressed){
+      } else if (state is AuthError) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: const Text('Authenticated'),
-              backgroundColor: Colors.green.shade400,
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
+            content: Text(state.message), // Fixed: removed '$state.message'
+            backgroundColor: Colors.red.shade400,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
         );
-        setState(() {
-        registerPressed = false; 
-      });
-        context.goNamed('loginPage');
-      } else if(state is AuthError && registerPressed){
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text('$state.message'),
-              backgroundColor: Colors.red.shade400,
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-        );
-        setState(() {
-        registerPressed = false; 
-      });
       }
     },
     child: Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         GestureDetector(
-          onTap: ()=> register(),
+          onTap: () => register(),
           child: Container(
             padding: const EdgeInsets.symmetric(
               horizontal: 48,
@@ -602,7 +527,7 @@ class _SignupPageState extends State<SignupPage> with TickerProviderStateMixin {
         ),
       ],
     )
-    );
+  );
   }
 
   

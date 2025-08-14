@@ -9,30 +9,42 @@ import 'geoModels.dart';
 import '../GeofenceUtils.dart/geoStorage.dart';
 
 class EnhancedGeofencingService {
-  static final EnhancedGeofencingService _instance = EnhancedGeofencingService._internal();
+  static final EnhancedGeofencingService _instance =
+      EnhancedGeofencingService._internal();
   factory EnhancedGeofencingService() => _instance;
   EnhancedGeofencingService._internal();
 
   final List<Geofence> _activeGeofences = [];
-  final FlutterLocalNotificationsPlugin _notificationsPlugin = FlutterLocalNotificationsPlugin();
+  final FlutterLocalNotificationsPlugin _notificationsPlugin =
+      FlutterLocalNotificationsPlugin();
   final Map<String, GeofenceStatus> _geofenceStatuses = {};
-  
+
   // Firebase integration
   StreamSubscription<DatabaseEvent>? _firebaseSubscription;
   StreamSubscription<Position>? _positionStream;
-  
+
   // Child location tracking
   LatLng? _childLocation;
   Timer? _cleanupTimer;
-  
+  final Map<String, DateTime> _lastAbsentAlert = {};
+  static const Duration _absentCooldown = Duration(minutes: 2);
+
   // Callbacks for UI updates
   Function(List<Geofence>)? onGeofencesUpdated;
   Function(String geofenceId, bool isInside)? onGeofenceStatusChanged;
   Function(LatLng location)? onChildLocationUpdated;
 
   List<Geofence> get activeGeofences => List.unmodifiable(_activeGeofences);
-  Map<String, GeofenceStatus> get geofenceStatuses => Map.unmodifiable(_geofenceStatuses);
+  Map<String, GeofenceStatus> get geofenceStatuses =>
+      Map.unmodifiable(_geofenceStatuses);
   LatLng? get childLocation => _childLocation;
+  // at the top of the class (fields)
+  Timer? _pollTimer;
+  void _startPollTimer() {
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(
+        const Duration(seconds: 30), (_) => _checkAllGeofences());
+  }
 
   Future<void> initialize() async {
     await _initializeNotifications();
@@ -40,11 +52,14 @@ class EnhancedGeofencingService {
     _startFirebaseLocationListener();
     _startLocationTracking();
     _startCleanupTimer();
+    _startPollTimer();
   }
 
   Future<void> _initializeNotifications() async {
-    const AndroidInitializationSettings androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const DarwinInitializationSettings iosSettings = DarwinInitializationSettings(
+    const AndroidInitializationSettings androidSettings =
+        AndroidInitializationSettings('@mipmap/ic_launcher');
+    const DarwinInitializationSettings iosSettings =
+        DarwinInitializationSettings(
       requestAlertPermission: true,
       requestBadgePermission: true,
       requestSoundPermission: true,
@@ -56,40 +71,32 @@ class EnhancedGeofencingService {
     await _notificationsPlugin.initialize(settings);
   }
 
-  // Future<void> _loadSavedGeofences() async {
-  //   final saved = await StorageService.getGeofences();
-  //   _activeGeofences.clear();
-  //   _activeGeofences.addAll(saved.where((g) => !g.isExpired && g.isActive));
-    
-  //   // Initialize statuses
-  //   for (final geofence in _activeGeofences) {
-  //     _geofenceStatuses[geofence.id] = GeofenceStatus.unknown;
-  //   }
-    
-  //   onGeofencesUpdated?.call(_activeGeofences);
-  // }
+
   Future<void> _loadSavedGeofences() async {
     final saved = await StorageService.getGeofences();
     _activeGeofences.clear();
     _activeGeofences.addAll(saved.where((g) => !g.isExpired && g.isActive));
     for (final geofence in _activeGeofences) {
       _geofenceStatuses[geofence.id] = GeofenceStatus.unknown;
-      print('Loaded geofence: ${geofence.placeName}, lat: ${geofence.latitude}, lng: ${geofence.longitude}');
+      print(
+          'Loaded geofence: ${geofence.placeName}, lat: ${geofence.latitude}, lng: ${geofence.longitude}');
     }
     onGeofencesUpdated?.call(_activeGeofences);
   }
 
   Future<List<Place>> getPlaces() async {
     final geofences = await StorageService.getGeofences();
-    return geofences.map((geofence) => Place(
-          id: geofence.placeId,
-          name: geofence.placeName,
-          address: '', // Address may need to be stored separately
-          latitude: geofence.latitude,
-          longitude: geofence.longitude,
-          startTime: geofence.startTime,
-          endTime: geofence.endTime,
-        )).toList();
+    return geofences
+        .map((geofence) => Place(
+              id: geofence.placeId,
+              name: geofence.placeName,
+              address: '', // Address may need to be stored separately
+              latitude: geofence.latitude,
+              longitude: geofence.longitude,
+              startTime: geofence.startTime,
+              endTime: geofence.endTime,
+            ))
+        .toList();
   }
 
   Future<void> _saveGeofences() async {
@@ -98,19 +105,18 @@ class EnhancedGeofencingService {
 
   void _startFirebaseLocationListener() {
     final ref = FirebaseDatabase.instance.ref('test_write/location');
-    
+
     _firebaseSubscription = ref.limitToLast(1).onValue.listen((event) {
       if (event.snapshot.exists) {
         final data = Map<String, dynamic>.from(
-          event.snapshot.children.first.value as Map
-        );
-        
+            event.snapshot.children.first.value as Map);
+
         double latitude = data['latitude'];
         double longitude = data['longitude'];
-        
+
         _childLocation = LatLng(latitude, longitude);
         onChildLocationUpdated?.call(_childLocation!);
-        
+
         // Check all geofences when location updates
         _checkAllGeofences();
       }
@@ -120,7 +126,6 @@ class EnhancedGeofencingService {
   void _startLocationTracking() async {
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
-      print('Location services are disabled');
       return;
     }
 
@@ -128,13 +133,11 @@ class EnhancedGeofencingService {
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
       if (permission == LocationPermission.denied) {
-        print('Location permissions are denied');
         return;
       }
     }
 
     if (permission == LocationPermission.deniedForever) {
-      print('Location permissions are permanently denied');
       return;
     }
 
@@ -155,25 +158,25 @@ class EnhancedGeofencingService {
     });
   }
 
-  void _checkAllGeofences() {
+  void _checkAllGeofences() async {
     if (_childLocation == null) return;
-    
+
     final currentTime = TimeOfDay.now();
-    
+
     for (final geofence in _activeGeofences) {
       if (!geofence.isActive || geofence.isExpired) continue;
-      
+
       final distance = Geolocator.distanceBetween(
         _childLocation!.latitude,
         _childLocation!.longitude,
         geofence.latitude,
         geofence.longitude,
       );
-      
+
       final isInside = distance <= geofence.radius;
       final isWithinTimeWindow = geofence.isWithinTimeWindow(currentTime);
       final previousStatus = _geofenceStatuses[geofence.id];
-      
+
       GeofenceStatus newStatus;
       if (isInside && isWithinTimeWindow) {
         newStatus = GeofenceStatus.insideOnTime;
@@ -184,29 +187,44 @@ class EnhancedGeofencingService {
       } else {
         newStatus = GeofenceStatus.outsideOffTime;
       }
-      
+
       _geofenceStatuses[geofence.id] = newStatus;
-      
+
       // Notify UI of status change
       if (previousStatus != newStatus) {
         onGeofenceStatusChanged?.call(geofence.id, isInside);
-        
+
         // Trigger notifications for important events
         if (isWithinTimeWindow) {
           if (isInside && previousStatus != GeofenceStatus.insideOnTime) {
             _triggerGeofenceEvent(geofence, GeofenceEvent.enter);
-          } else if (!isInside && previousStatus == GeofenceStatus.insideOnTime) {
+          } else if (!isInside &&
+              previousStatus == GeofenceStatus.insideOnTime) {
             _triggerGeofenceEvent(geofence, GeofenceEvent.exit);
           }
+        }
+      }
+      // Alert when the child is outside during the active window (even if they never entered)
+      if (isWithinTimeWindow && !isInside) {
+        final last = _lastAbsentAlert[geofence.id];
+        final ok =
+            last == null || DateTime.now().difference(last) >= _absentCooldown;
+        if (ok) {
+          await _showNotification(
+            'Geofence Alert - Absent',
+            'Child should be at ${geofence.placeName} now',
+          );
+          _lastAbsentAlert[geofence.id] = DateTime.now();
         }
       }
     }
   }
 
-  Future<void> _triggerGeofenceEvent(Geofence geofence, GeofenceEvent event) async {
+  Future<void> _triggerGeofenceEvent(
+      Geofence geofence, GeofenceEvent event) async {
     String title;
     String body;
-    
+
     switch (event) {
       case GeofenceEvent.enter:
         title = 'Geofence Entry';
@@ -227,20 +245,21 @@ class EnhancedGeofencingService {
   }
 
   Future<void> _showNotification(String title, String body) async {
-    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+    const AndroidNotificationDetails androidDetails =
+        AndroidNotificationDetails(
       'geofence_channel',
       'Geofence Notifications',
       channelDescription: 'Notifications for geofence events',
       importance: Importance.high,
       priority: Priority.high,
     );
-    
+
     const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
       presentAlert: true,
       presentBadge: true,
       presentSound: true,
     );
-    
+
     const NotificationDetails details = NotificationDetails(
       android: androidDetails,
       iOS: iosDetails,
@@ -263,78 +282,62 @@ class EnhancedGeofencingService {
   void _cleanupExpiredGeofences() {
     final initialCount = _activeGeofences.length;
     _activeGeofences.removeWhere((geofence) => geofence.isExpired);
-    
+
     if (_activeGeofences.length != initialCount) {
       _saveGeofences();
       onGeofencesUpdated?.call(_activeGeofences);
-      print('Cleaned up ${initialCount - _activeGeofences.length} expired geofences');
     }
   }
 
-  // Future<void> createGeofenceFromPlace(Place place) async {
-  //   final geofence = Geofence.fromPlace(place);
-  //   _activeGeofences.add(geofence);
-  //   _geofenceStatuses[geofence.id] = GeofenceStatus.unknown;
-    
-  //   await _saveGeofences();
-  //   onGeofencesUpdated?.call(_activeGeofences);
-    
-  //   // Check the new geofence immediately
-  //   if (_childLocation != null) {
-  //     _checkAllGeofences();
-  //   }
-    
-  //   print('Created geofence for ${place.name}');
-  // }
-  // Add this method to EnhancedGeofencingService class
+  Future<void> createGeofenceFromPlace(Place place) async {
+    // final existingGeofence = _activeGeofences.firstWhere(
+    //   (g) => g.placeId == place.id,
+    //   orElse: () => null,
+    // );
+    if (_activeGeofences.any((g) => g.id == 'geofence_${place.id}')) {
+      return; // Don't create duplicate
+    }
 
-Future<void> createGeofenceFromPlace(Place place) async {
-  // final existingGeofence = _activeGeofences.firstWhere(
-  //   (g) => g.placeId == place.id,
-  //   orElse: () => null,
-  // );
-  if (_activeGeofences.any((g) => g.id == 'geofence_${place.id}')) {
-  return; // Don't create duplicate
+    final geofence = Geofence.fromPlace(place);
+    _activeGeofences.add(geofence);
+    _geofenceStatuses[geofence.id] = GeofenceStatus.unknown;
+
+    await _saveGeofences();
+    onGeofencesUpdated?.call(_activeGeofences);
+
+    // Check the new geofence immediately
+    if (_childLocation != null) {
+      _checkAllGeofences();
+    }
   }
-  
-  final geofence = Geofence.fromPlace(place);
-  _activeGeofences.add(geofence);
-  _geofenceStatuses[geofence.id] = GeofenceStatus.unknown;
-  
-  await _saveGeofences();
-  onGeofencesUpdated?.call(_activeGeofences);
-  
-  // Check the new geofence immediately
-  if (_childLocation != null) {
-    _checkAllGeofences();
-  }
-}
 
   Future<void> removeGeofence(String geofenceId) async {
     _activeGeofences.removeWhere((g) => g.id == geofenceId);
     _geofenceStatuses.remove(geofenceId);
-    
+
     await _saveGeofences();
     onGeofencesUpdated?.call(_activeGeofences);
   }
 
   Future<void> removeGeofencesForPlace(String placeId) async {
-    final removedGeofences = _activeGeofences.where((g) => g.placeId == placeId).toList();
-    
+    final removedGeofences =
+        _activeGeofences.where((g) => g.placeId == placeId).toList();
+
     for (final geofence in removedGeofences) {
       _geofenceStatuses.remove(geofence.id);
     }
-    
+
     _activeGeofences.removeWhere((g) => g.placeId == placeId);
-    
+
     await _saveGeofences();
     onGeofencesUpdated?.call(_activeGeofences);
   }
 
   Future<void> updateGeofenceRadius(String geofenceId, double newRadius) async {
-    final geofenceIndex = _activeGeofences.indexWhere((g) => g.id == geofenceId);
+    final geofenceIndex =
+        _activeGeofences.indexWhere((g) => g.id == geofenceId);
     if (geofenceIndex == -1) return;
-    
+
     // Create updated geofence with new radius
     final oldGeofence = _activeGeofences[geofenceIndex];
     final updatedGeofence = Geofence(
@@ -349,23 +352,25 @@ Future<void> createGeofenceFromPlace(Place place) async {
       createdAt: oldGeofence.createdAt,
       expiresAt: oldGeofence.expiresAt,
       isActive: oldGeofence.isActive,
-      type: oldGeofence.type, 
+      type: oldGeofence.type,
     );
-    
+
     _activeGeofences[geofenceIndex] = updatedGeofence;
     await _saveGeofences();
     onGeofencesUpdated?.call(_activeGeofences);
-    
+
     // Re-check geofences after radius update
     if (_childLocation != null) {
       _checkAllGeofences();
     }
   }
 
-  Future<void> updateGeofenceTimeWindow(String geofenceId, TimeOfDay startTime, TimeOfDay endTime) async {
-    final geofenceIndex = _activeGeofences.indexWhere((g) => g.id == geofenceId);
+  Future<void> updateGeofenceTimeWindow(
+      String geofenceId, TimeOfDay startTime, TimeOfDay endTime) async {
+    final geofenceIndex =
+        _activeGeofences.indexWhere((g) => g.id == geofenceId);
     if (geofenceIndex == -1) return;
-    
+
     final oldGeofence = _activeGeofences[geofenceIndex];
     final updatedGeofence = Geofence(
       id: oldGeofence.id,
@@ -381,11 +386,11 @@ Future<void> createGeofenceFromPlace(Place place) async {
       isActive: oldGeofence.isActive,
       type: oldGeofence.type,
     );
-    
+
     _activeGeofences[geofenceIndex] = updatedGeofence;
     await _saveGeofences();
     onGeofencesUpdated?.call(_activeGeofences);
-    
+
     // Re-check geofences after time window update
     if (_childLocation != null) {
       _checkAllGeofences();
@@ -393,9 +398,10 @@ Future<void> createGeofenceFromPlace(Place place) async {
   }
 
   Future<void> toggleGeofenceStatus(String geofenceId, bool isActive) async {
-    final geofenceIndex = _activeGeofences.indexWhere((g) => g.id == geofenceId);
+    final geofenceIndex =
+        _activeGeofences.indexWhere((g) => g.id == geofenceId);
     if (geofenceIndex == -1) return;
-    
+
     final oldGeofence = _activeGeofences[geofenceIndex];
     final updatedGeofence = Geofence(
       id: oldGeofence.id,
@@ -411,20 +417,22 @@ Future<void> createGeofenceFromPlace(Place place) async {
       isActive: isActive,
       type: oldGeofence.type,
     );
-    
+
     _activeGeofences[geofenceIndex] = updatedGeofence;
     await _saveGeofences();
     onGeofencesUpdated?.call(_activeGeofences);
-    
+
     if (isActive && _childLocation != null) {
       _checkAllGeofences();
     }
   }
 
-  Future<void> extendGeofenceExpiry(String geofenceId, Duration extension) async {
-    final geofenceIndex = _activeGeofences.indexWhere((g) => g.id == geofenceId);
+  Future<void> extendGeofenceExpiry(
+      String geofenceId, Duration extension) async {
+    final geofenceIndex =
+        _activeGeofences.indexWhere((g) => g.id == geofenceId);
     if (geofenceIndex == -1) return;
-    
+
     final oldGeofence = _activeGeofences[geofenceIndex];
     final updatedGeofence = Geofence(
       id: oldGeofence.id,
@@ -440,7 +448,7 @@ Future<void> createGeofenceFromPlace(Place place) async {
       isActive: oldGeofence.isActive,
       type: oldGeofence.type,
     );
-    
+
     _activeGeofences[geofenceIndex] = updatedGeofence;
     await _saveGeofences();
     onGeofencesUpdated?.call(_activeGeofences);
@@ -459,12 +467,12 @@ Future<void> createGeofenceFromPlace(Place place) async {
   // Get distance to a specific geofence
   double? getDistanceToGeofence(String geofenceId) {
     if (_childLocation == null) return null;
-    
+
     final geofence = _activeGeofences.firstWhere(
       (g) => g.id == geofenceId,
       orElse: () => throw Exception('Geofence not found'),
     );
-    
+
     return Geolocator.distanceBetween(
       _childLocation!.latitude,
       _childLocation!.longitude,
@@ -476,7 +484,7 @@ Future<void> createGeofenceFromPlace(Place place) async {
   // Get all geofences within a certain distance
   List<Geofence> getNearbyGeofences(double maxDistance) {
     if (_childLocation == null) return [];
-    
+
     return _activeGeofences.where((geofence) {
       final distance = Geolocator.distanceBetween(
         _childLocation!.latitude,
@@ -506,6 +514,7 @@ Future<void> createGeofenceFromPlace(Place place) async {
 
   // Dispose and cleanup
   Future<void> dispose() async {
+    _pollTimer?.cancel();
     _cleanupTimer?.cancel();
     _firebaseSubscription?.cancel();
     _positionStream?.cancel();
@@ -532,12 +541,12 @@ enum GeofenceEvent {
 class LatLng {
   final double latitude;
   final double longitude;
-  
+
   LatLng(this.latitude, this.longitude);
-  
+
   @override
   String toString() => 'LatLng($latitude, $longitude)';
-  
+
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -545,7 +554,7 @@ class LatLng {
           runtimeType == other.runtimeType &&
           latitude == other.latitude &&
           longitude == other.longitude;
-  
+
   @override
   int get hashCode => latitude.hashCode ^ longitude.hashCode;
 }
