@@ -93,7 +93,7 @@ class _MainAppState extends State<MainApp> {
     final GoRouter router =
       GoRouter(
         navigatorKey: NavigationService.navigatorKey,
-        initialLocation: '/emergencyPage',
+        initialLocation: '/',
         routes: <RouteBase>[
       GoRoute(
         path: '/',

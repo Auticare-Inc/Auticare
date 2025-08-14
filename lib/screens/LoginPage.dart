@@ -193,7 +193,7 @@ Widget build(BuildContext context) {
             ),
             const SizedBox(width: 12),
             const Text(
-              'CareConnect',
+              'AutiCare',
               style: TextStyle(
                 fontSize: 24,
                 fontWeight: FontWeight.bold,

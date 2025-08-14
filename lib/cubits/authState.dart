@@ -12,6 +12,11 @@ abstract class AuthState{}
     final AppUser user;
     Authenticated(this.user);
   }
+  //Unverified
+  class Unverified extends AuthState {
+  final AppUser user;
+  Unverified(this.user);
+}
 
   //unauthenticated
   class Unauthenticated extends AuthState{}

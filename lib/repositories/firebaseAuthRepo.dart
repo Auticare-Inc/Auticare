@@ -8,9 +8,7 @@ import 'authRepo.dart';
 
 class FirebaseAuthRepo implements AuthRepo{
   final FirebaseAuth firebaseAuth = FirebaseAuth.instance;
-  final FirebaseFirestore firebaseFirestore = FirebaseFirestore.instanceFor(
-    databaseId: 'autism',
-    app: Firebase.app());
+  final FirebaseFirestore firebaseFirestore = FirebaseFirestore.instanceFor(app: Firebase.app(),databaseId: 'autism');
   @override
   Future<AppUser?> loginInWithEmailPassword(String email, String password)async{
     try{
@@ -97,5 +95,11 @@ class FirebaseAuthRepo implements AuthRepo{
   @override
   Future<void> logout()async{
     FirebaseAuth.instance.signOut();
+  }
+  
+  @override
+  Future<bool> doesUserProfileExist(String uid) {
+    // TODO: implement doesUserProfileExist
+    throw UnimplementedError();
   }
 }

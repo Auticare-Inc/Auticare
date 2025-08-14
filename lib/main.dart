@@ -15,12 +15,40 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   print('Handling a background message: ${message.messageId}');
 }
 
-void main()async{
+// void main()async{
+//   WidgetsFlutterBinding.ensureInitialized();
+//   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+//   await FirebaseMessaging.instance.requestPermission();
+//   final authRepo = FirebaseAuthRepo();
+//     // Initialize geofencing service
+//   try {
+//     await EnhancedGeofencingService().initialize();
+//     print('Geofencing service initialized successfully');
+//   } catch (e) {
+//     print('Failed to initialize geofencing service: $e');
+//   }
+
+//     // Set the background messaging handler
+//   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  
+//   runApp(
+//     // MultiBlocProvider(
+//     //   providers:[
+//     //     BlocProvider(create:(context)=>Authcubit(repo: authRepo)..checkAuth())
+//     //   ],
+//     // child: const MainApp())
+//     ChangeNotifierProvider(
+//       create: (context) => PlacesProvider(),
+//       child: MainApp(),
+//     ),
+//   );
+// }
+
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   await FirebaseMessaging.instance.requestPermission();
-  final authRepo = FirebaseAuthRepo();
-    // Initialize geofencing service
+
   try {
     await EnhancedGeofencingService().initialize();
     print('Geofencing service initialized successfully');
@@ -28,18 +56,18 @@ void main()async{
     print('Failed to initialize geofencing service: $e');
   }
 
-    // Set the background messaging handler
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
-  
+
   runApp(
-    // MultiBlocProvider(
-    //   providers:[
-    //     BlocProvider(create:(context)=>Authcubit(repo: authRepo)..checkAuth())
-    //   ],
-    // child: const MainApp())
-    ChangeNotifierProvider(
-      create: (context) => PlacesProvider(),
-      child: MainApp(),
+    MultiBlocProvider(
+      providers: [
+        BlocProvider(create: (context) => Authcubit(repo: FirebaseAuthRepo())..checkAuth()),
+      ],
+      child: ChangeNotifierProvider(
+        create: (context) => PlacesProvider(),
+        child: const MainApp(),
+      ),
     ),
   );
 }
+

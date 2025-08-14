@@ -19,7 +19,8 @@ class PlacesScreen extends StatefulWidget {
   _PlacesScreenState createState() => _PlacesScreenState();
 }
 
-class _PlacesScreenState extends State<PlacesScreen> with TickerProviderStateMixin {
+class _PlacesScreenState extends State<PlacesScreen>
+    with TickerProviderStateMixin {
   final TextEditingController _searchController = TextEditingController();
   List<Map<String, dynamic>> _searchResults = [];
   bool _isSearching = false;
@@ -29,9 +30,11 @@ class _PlacesScreenState extends State<PlacesScreen> with TickerProviderStateMix
   late Animation<double> _fabAnimation;
 
   Future<List<Map<String, dynamic>>> fetchPlaceFromGoogle(String query) async {
-    const apiKey = 'AIzaSyBXXpFr0y3eIptseTiNnxVO4kgrqhB24Bk'; // Replace with your actual API key
+    const apiKey =
+        'AIzaSyBXXpFr0y3eIptseTiNnxVO4kgrqhB24Bk'; // Replace with your actual API key
     final encodedQuery = Uri.encodeComponent(query);
-    final url = 'https://maps.googleapis.com/maps/api/place/textsearch/json?query=$encodedQuery&key=$apiKey';
+    final url =
+        'https://maps.googleapis.com/maps/api/place/textsearch/json?query=$encodedQuery&key=$apiKey';
 
     try {
       print('Making API call to: $url');
@@ -49,8 +52,11 @@ class _PlacesScreenState extends State<PlacesScreen> with TickerProviderStateMix
           print('API Error: Over query limit');
           throw Exception('API query limit exceeded');
         }
-        if (data['status'] == 'OK' && data['results'] != null && data['results'].isNotEmpty) {
-          final places = List<Map<String, dynamic>>.from(data['results'].map((place) {
+        if (data['status'] == 'OK' &&
+            data['results'] != null &&
+            data['results'].isNotEmpty) {
+          final places =
+              List<Map<String, dynamic>>.from(data['results'].map((place) {
             final geometry = place['geometry'];
             final location = geometry?['location'];
             return {
@@ -71,7 +77,8 @@ class _PlacesScreenState extends State<PlacesScreen> with TickerProviderStateMix
         }
       } else {
         print('HTTP Error: ${response.statusCode}');
-        throw Exception('HTTP ${response.statusCode}: ${response.reasonPhrase}');
+        throw Exception(
+            'HTTP ${response.statusCode}: ${response.reasonPhrase}');
       }
     } catch (e) {
       print('Error fetching places: $e');
@@ -157,7 +164,8 @@ class _PlacesScreenState extends State<PlacesScreen> with TickerProviderStateMix
   }
 
   void _addPlaceWithPrefilledData(Map<String, dynamic> placeData) {
-    print('Passing to AddPlaceSheet: lat=${placeData['latitude']}, lng=${placeData['longitude']}');
+    print(
+        'Passing to AddPlaceSheet: lat=${placeData['latitude']}, lng=${placeData['longitude']}');
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -181,7 +189,8 @@ class _PlacesScreenState extends State<PlacesScreen> with TickerProviderStateMix
       builder: (context) => AddPlaceSheet(
         place: place,
         onPlaceAdded: (updatedPlace) {
-          Provider.of<PlacesProvider>(context, listen: false).updatePlace(updatedPlace);
+          Provider.of<PlacesProvider>(context, listen: false)
+              .updatePlace(updatedPlace);
           widget.onGeofenceUpdated?.call();
         },
         onGeofenceUpdated: widget.onGeofenceUpdated,
@@ -206,7 +215,9 @@ class _PlacesScreenState extends State<PlacesScreen> with TickerProviderStateMix
                 _buildHeader(provider.places.length),
                 _buildSearchBar(),
                 Expanded(
-                  child: _isSearching ? _buildSearchResults() : _buildPlacesList(provider.places),
+                  child: _isSearching
+                      ? _buildSearchResults()
+                      : _buildPlacesList(provider.places),
                 ),
               ],
             ),
@@ -232,7 +243,10 @@ class _PlacesScreenState extends State<PlacesScreen> with TickerProviderStateMix
         children: [
           IconButton(
             onPressed: () => context.goNamed('dashboard'),
-            icon: const Icon(FontAwesomeIcons.angleLeft,size: 15,),
+            icon: const Icon(
+              FontAwesomeIcons.angleLeft,
+              size: 15,
+            ),
           ),
           const SizedBox(width: 10),
           const Center(
@@ -325,7 +339,8 @@ class _PlacesScreenState extends State<PlacesScreen> with TickerProviderStateMix
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   CircularProgressIndicator(
-                    valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
+                    valueColor:
+                        AlwaysStoppedAnimation<Color>(AppColors.primary),
                   ),
                   SizedBox(height: 16),
                   Text(
@@ -418,7 +433,8 @@ class _PlacesScreenState extends State<PlacesScreen> with TickerProviderStateMix
                       itemBuilder: (context, index) {
                         final place = _searchResults[index];
                         return Container(
-                          margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
+                          margin: const EdgeInsets.symmetric(
+                              horizontal: 24, vertical: 4),
                           child: Material(
                             color: AppColors.cardBackground,
                             borderRadius: BorderRadius.circular(12),
@@ -444,7 +460,8 @@ class _PlacesScreenState extends State<PlacesScreen> with TickerProviderStateMix
                                       width: 40,
                                       height: 40,
                                       decoration: BoxDecoration(
-                                        color: const Color.fromRGBO(90, 111, 129, 1),
+                                        color: const Color.fromRGBO(
+                                            90, 111, 129, 1),
                                         borderRadius: BorderRadius.circular(10),
                                       ),
                                       child: const Icon(
@@ -456,7 +473,8 @@ class _PlacesScreenState extends State<PlacesScreen> with TickerProviderStateMix
                                     const SizedBox(width: 12),
                                     Expanded(
                                       child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
                                         children: [
                                           Text(
                                             place['name'] ?? 'Unknown Place',
@@ -466,22 +484,27 @@ class _PlacesScreenState extends State<PlacesScreen> with TickerProviderStateMix
                                               color: AppColors.textPrimary,
                                             ),
                                           ),
-                                          if (place['address'] != null && place['address'].isNotEmpty)
+                                          if (place['address'] != null &&
+                                              place['address'].isNotEmpty)
                                             Padding(
-                                              padding: const EdgeInsets.only(top: 4),
+                                              padding:
+                                                  const EdgeInsets.only(top: 4),
                                               child: Text(
                                                 place['address'],
                                                 style: const TextStyle(
                                                   fontSize: 14,
-                                                  color: AppColors.textSecondary,
+                                                  color:
+                                                      AppColors.textSecondary,
                                                 ),
                                                 maxLines: 1,
                                                 overflow: TextOverflow.ellipsis,
                                               ),
                                             ),
-                                          if (place['rating'] != null && place['rating'] > 0)
+                                          if (place['rating'] != null &&
+                                              place['rating'] > 0)
                                             Padding(
-                                              padding: const EdgeInsets.only(top: 4),
+                                              padding:
+                                                  const EdgeInsets.only(top: 4),
                                               child: Row(
                                                 children: [
                                                   const Icon(
@@ -494,15 +517,18 @@ class _PlacesScreenState extends State<PlacesScreen> with TickerProviderStateMix
                                                     place['rating'].toString(),
                                                     style: const TextStyle(
                                                       fontSize: 14,
-                                                      color: AppColors.textSecondary,
+                                                      color: AppColors
+                                                          .textSecondary,
                                                     ),
                                                   ),
                                                 ],
                                               ),
                                             ),
-                                          if (place['latitude'] != 0.0 && place['longitude'] != 0.0)
+                                          if (place['latitude'] != 0.0 &&
+                                              place['longitude'] != 0.0)
                                             Padding(
-                                              padding: const EdgeInsets.only(top: 4),
+                                              padding:
+                                                  const EdgeInsets.only(top: 4),
                                               child: Text(
                                                 'Coords: ${place['latitude'].toStringAsFixed(4)}, ${place['longitude'].toStringAsFixed(4)}',
                                                 style: const TextStyle(
